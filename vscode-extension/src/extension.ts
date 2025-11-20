@@ -826,7 +826,7 @@ class HistoryWebviewPanel {
       // Check if session is archived
       const session = state.sessions.find(s => s.sessionId === state.selectedId);
       if (session && session.isArchived) {
-        alert('\u26a0\ufe0f \u5f52\u6863\u4f1a\u8bdd\u65e0\u6cd5 resume\uff01\n\nCodex \u7684 resume \u547d\u4ee4\u53ea\u80fd\u52a0\u8f7d sessions \u76ee\u5f55\u4e2d\u7684\u4f1a\u8bdd\u3002\u5982\u9700 resume \u6b64\u4f1a\u8bdd\uff0c\u8bf7\u5148\u70b9\u51fb\u201c\u53d6\u6d88\u5f52\u6863\u201d\u6309\u94ae\u3002');
+        alert('⚠️ 归档会话无法 resume！\\n\\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先点击"取消归档"按钮。');
         return;
       }
       vscode.postMessage({ type: 'copyResume', payload: { sessionId: state.selectedId } });
@@ -837,7 +837,7 @@ class HistoryWebviewPanel {
       // Check if session is archived
       const session = state.sessions.find(s => s.sessionId === state.selectedId);
       if (session && session.isArchived) {
-        alert('\u26a0\ufe0f \u5f52\u6863\u4f1a\u8bdd\u65e0\u6cd5 resume\uff01\n\nCodex \u7684 resume \u547d\u4ee4\u53ea\u80fd\u52a0\u8f7d sessions \u76ee\u5f55\u4e2d\u7684\u4f1a\u8bdd\u3002\u5982\u9700 resume \u6b64\u4f1a\u8bdd\uff0c\u8bf7\u5148\u70b9\u51fb\u201c\u53d6\u6d88\u5f52\u6863\u201d\u6309\u94ae\u3002');
+        alert('⚠️ 归档会话无法 resume！\\n\\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先点击"取消归档"按钮。');
         return;
       }
       vscode.postMessage({ type: 'resumeInTerminal', payload: { sessionId: state.selectedId } });
