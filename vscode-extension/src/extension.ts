@@ -230,7 +230,15 @@ class HistoryWebviewPanel {
   private async sendPreview(sessionId: string, hideAgents: boolean) {
     try {
       const data = await this.manager.readSessionMessages(sessionId, { limit: 200, hideAgents });
-      this.panel.webview.postMessage({ type: 'preview', payload: data });
+      
+      // Get pin status from cache
+      const session = this.sessionsCache.find(s => s.sessionId === sessionId);
+      const pinned = session?.pinned ?? false;
+      
+      this.panel.webview.postMessage({ 
+        type: 'preview', 
+        payload: { ...data, pinned } 
+      });
     } catch (error: any) {
       this.handleError(error);
       // 预览加载失败，显示错误消息在预览区，而不是清空列表
@@ -238,7 +246,8 @@ class HistoryWebviewPanel {
         type: 'preview',
         payload: {
           messages: [{ role: 'system', text: `无法加载会话内容: ${error?.message || '未知错误'}`, timestamp: '' }],
-          remark: ''
+          remark: '',
+          pinned: false
         }
       });
     }
@@ -255,7 +264,15 @@ class HistoryWebviewPanel {
       await this.manager.pin(sessionId);
       vscode.window.showInformationMessage(`已置顶 ${sessionId}`);
     }
+    
+    // Refresh sidebar
+    this.sidebarProvider.refresh();
+    
+    // Refresh Webview sessions list
     await this.sendSessions(this.currentFilter);
+    
+    // Update preview to reflect new pin status
+    await this.sendPreview(sessionId, this.currentFilter.hideAgents);
   }
 
   private async handleDelete(sessionId: string) {
@@ -873,6 +890,13 @@ class HistoryWebviewPanel {
     function renderPreview(data) {
       remarkInput.value = data.remark || '';
       previewEl.innerHTML = '';
+      
+      // Update pin button text based on pin status
+      if (data.pinned) {
+        pinBtn.textContent = '📌 取消置顶';
+      } else {
+        pinBtn.textContent = '📌 置顶';
+      }
       
       // Add global toggle button if there are messages
       if (data.messages && data.messages.length > 0) {
