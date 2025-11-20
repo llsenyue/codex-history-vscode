@@ -183,8 +183,17 @@ class HistoryWebviewPanel {
         }
         break;
       case 'copyResume':
-        const cmd = await this.manager.getResumeCommand(message.payload.sessionId);
-        await vscode.env.clipboard.writeText(cmd);
+        // Check if session is archived
+        const resumeSession = this.sessionsCache.find(s => s.sessionId === message.payload.sessionId);
+        if (resumeSession?.isArchived) {
+          vscode.window.showWarningMessage(
+            '⚠️ 归档会话无法 resume！\n\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先取消归档。',
+            { modal: true }
+          );
+          break;
+        }
+        const resumeCmd = await this.manager.getResumeCommand(message.payload.sessionId);
+        await vscode.env.clipboard.writeText(resumeCmd);
         vscode.window.showInformationMessage('Resume 命令已复制到剪贴板');
         break;
       case 'pinToggle':
@@ -318,6 +327,17 @@ class HistoryWebviewPanel {
   }
 
   private async handleResumeInTerminal(sessionId: string) {
+    // Check if session is archived
+    const summaries = await this.manager.listSummaries({ hideAgents: true, limit: 1000 });
+    const session = summaries.find(s => s.sessionId === sessionId);
+    if (session?.isArchived) {
+      vscode.window.showWarningMessage(
+        '⚠️ 归档会话无法 resume！\n\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先取消归档。',
+        { modal: true }
+      );
+      return;
+    }
+
     const cmd = await this.manager.getResumeCommand(sessionId);
     const terminal = vscode.window.createTerminal('Codex Resume');
     terminal.show();
