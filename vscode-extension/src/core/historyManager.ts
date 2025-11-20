@@ -340,8 +340,8 @@ export class HistoryManager {
                         
                         // Skip if it's a system prompt
                         if (!isSystemPrompt(extractedText)) {
-                            firstText = extractedText;
-                            break;
+                            if (!firstText) firstText = extractedText;
+                            turnCount++;
                         }
                     }
                     // Legacy format: role: "user"
@@ -367,8 +367,7 @@ export class HistoryManager {
                             // Try to extract actual user request
                             const match = text.match(/##\s*My request for Codex:\s*(.+)$/s);
                             if (match && match[1]) {
-                                firstText = match[1].trim();
-                                if (firstText) break;
+                                if (!firstText) firstText = match[1].trim();
                             }
                             turnCount++;
                         }
