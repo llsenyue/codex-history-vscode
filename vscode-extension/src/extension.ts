@@ -101,7 +101,8 @@ type PanelMessage =
   | { type: 'deleteSession'; payload: { sessionId: string } }
   | { type: 'saveRemark'; payload: { sessionId: string; remark: string } }
   | { type: 'resumeInTerminal'; payload: { sessionId: string } }
-  | { type: 'batchDeleteEmpty' };
+  | { type: 'batchDeleteEmpty' }
+  | { type: 'archiveToggle'; payload: { sessionId: string } };
 
 class HistoryWebviewPanel {
   public static currentPanel: HistoryWebviewPanel | undefined;
@@ -201,6 +202,9 @@ class HistoryWebviewPanel {
       case 'saveRemark':
         await this.handleRemark(message.payload.sessionId, message.payload.remark);
         break;
+      case 'archiveToggle':
+        await this.handleArchive(message.payload.sessionId);
+        break;
       default:
         break;
     }
@@ -231,13 +235,14 @@ class HistoryWebviewPanel {
     try {
       const data = await this.manager.readSessionMessages(sessionId, { limit: 200, hideAgents });
       
-      // Get pin status from cache
+      // Get pin and archive status from cache
       const session = this.sessionsCache.find(s => s.sessionId === sessionId);
       const pinned = session?.pinned ?? false;
+      const isArchived = session?.isArchived ?? false;
       
       this.panel.webview.postMessage({ 
         type: 'preview', 
-        payload: { ...data, pinned } 
+        payload: { ...data, pinned, isArchived } 
       });
     } catch (error: any) {
       this.handleError(error);
@@ -361,6 +366,32 @@ class HistoryWebviewPanel {
     this.sidebarProvider.refresh();
     
     await this.sendSessions(this.currentFilter);
+  }
+
+  private async handleArchive(sessionId: string) {
+    const session = this.sessionsCache.find((s) => s.sessionId === sessionId);
+    const isArchived = session?.isArchived ?? false;
+    
+    try {
+      if (isArchived) {
+        await this.manager.unarchiveSession(sessionId);
+        vscode.window.showInformationMessage(`已取消归档 ${sessionId}`);
+      } else {
+        await this.manager.archiveSession(sessionId);
+        vscode.window.showInformationMessage(`已归档 ${sessionId}`);
+      }
+      
+      // Refresh sidebar
+      this.sidebarProvider.refresh();
+      
+      // Refresh Webview sessions list
+      await this.sendSessions(this.currentFilter);
+      
+      // Update preview to reflect new archive status
+      await this.sendPreview(sessionId, this.currentFilter.hideAgents);
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`归档操作失败: ${error.message}`);
+    }
   }
 
   private handleError(error: any) {
@@ -709,6 +740,7 @@ class HistoryWebviewPanel {
             <button onclick="copyResumeCommand()">复制 Resume 命令</button>
             <button onclick="resumeInTerminal()">在终端恢复 ▶️</button>
             <button id="pinBtn" disabled>📌 置顶</button>
+            <button id="archiveBtn" disabled>📦 归档</button>
             <button onclick="deleteSession()" style="background-color: var(--vscode-errorForeground); color: var(--vscode-editor-background);">删除会话</button>
           </div>
           <div class="remark-group">
@@ -733,6 +765,7 @@ class HistoryWebviewPanel {
     const refreshBtn = document.getElementById('refreshBtn');
     const batchDeleteEmptyBtn = document.getElementById('batchDeleteEmptyBtn');
     const pinBtn = document.getElementById('pinBtn');
+    const archiveBtn = document.getElementById('archiveBtn');
     // const pinBtn = document = document.getElementById('pinBtn');   // Removed
     // const deleteBtn = document.getElementById('deleteBtn'); // Removed
     const remarkInput = document.getElementById('remarkInput');
@@ -770,11 +803,23 @@ class HistoryWebviewPanel {
 
     function copyResumeCommand() {
       if (!state.selectedId) return;
+      // Check if session is archived
+      const session = state.sessions.find(s => s.sessionId === state.selectedId);
+      if (session && session.isArchived) {
+        alert('\u26a0\ufe0f \u5f52\u6863\u4f1a\u8bdd\u65e0\u6cd5 resume\uff01\n\nCodex \u7684 resume \u547d\u4ee4\u53ea\u80fd\u52a0\u8f7d sessions \u76ee\u5f55\u4e2d\u7684\u4f1a\u8bdd\u3002\u5982\u9700 resume \u6b64\u4f1a\u8bdd\uff0c\u8bf7\u5148\u70b9\u51fb\u201c\u53d6\u6d88\u5f52\u6863\u201d\u6309\u94ae\u3002');
+        return;
+      }
       vscode.postMessage({ type: 'copyResume', payload: { sessionId: state.selectedId } });
     }
 
     function resumeInTerminal() {
       if (!state.selectedId) return;
+      // Check if session is archived
+      const session = state.sessions.find(s => s.sessionId === state.selectedId);
+      if (session && session.isArchived) {
+        alert('\u26a0\ufe0f \u5f52\u6863\u4f1a\u8bdd\u65e0\u6cd5 resume\uff01\n\nCodex \u7684 resume \u547d\u4ee4\u53ea\u80fd\u52a0\u8f7d sessions \u76ee\u5f55\u4e2d\u7684\u4f1a\u8bdd\u3002\u5982\u9700 resume \u6b64\u4f1a\u8bdd\uff0c\u8bf7\u5148\u70b9\u51fb\u201c\u53d6\u6d88\u5f52\u6863\u201d\u6309\u94ae\u3002');
+        return;
+      }
       vscode.postMessage({ type: 'resumeInTerminal', payload: { sessionId: state.selectedId } });
     }
 
@@ -788,6 +833,13 @@ class HistoryWebviewPanel {
       if (state.selectedId) {
         setLoading(true);
         vscode.postMessage({ type: 'pinToggle', payload: { sessionId: state.selectedId } });
+      }
+    });
+    
+    archiveBtn.addEventListener('click', () => {
+      if (state.selectedId) {
+        setLoading(true);
+        vscode.postMessage({ type: 'archiveToggle', payload: { sessionId: state.selectedId } });
       }
     });
     saveRemarkBtn.addEventListener('click', () => {
@@ -881,7 +933,7 @@ class HistoryWebviewPanel {
 
     function selectSession(id) {
       state.selectedId = id;
-      pinBtn.disabled = saveRemarkBtn.disabled = remarkInput.disabled = !id;
+      pinBtn.disabled = archiveBtn.disabled = saveRemarkBtn.disabled = remarkInput.disabled = !id;
       saveRemarkBtn.disabled = remarkInput.disabled = !id;
       renderSessions();
       setLoading(true);
@@ -897,6 +949,13 @@ class HistoryWebviewPanel {
         pinBtn.textContent = '📌 取消置顶';
       } else {
         pinBtn.textContent = '📌 置顶';
+      }
+      
+      // Update archive button text based on archive status
+      if (data.isArchived) {
+        archiveBtn.textContent = '📦 取消归档';
+      } else {
+        archiveBtn.textContent = '📦 归档';
       }
       
       // Add global toggle button if there are messages

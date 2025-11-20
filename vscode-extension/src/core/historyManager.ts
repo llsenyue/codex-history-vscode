@@ -477,6 +477,50 @@ export class HistoryManager {
     await this.state.unpin(sessionId);
   }
 
+  async archiveSession(sessionId: string): Promise<void> {
+    const file = await this.findSessionFile(sessionId);
+    if (!file) {
+      throw new Error(`会话文件未找到: ${sessionId}`);
+    }
+
+    // Check if already archived
+    if (file.includes('archived_sessions')) {
+      throw new Error('会话已经归档');
+    }
+
+    // Create archived_sessions directory if it doesn't exist
+    const archivesDir = path.join(path.dirname(this.paths.sessionsDir), 'archived_sessions');
+    await fs.ensureDir(archivesDir);
+
+    // Move file to archived_sessions
+    const fileName = path.basename(file);
+    const destPath = path.join(archivesDir, fileName);
+    await fs.move(file, destPath, { overwrite: true });
+
+    // Rebuild index to update history.jsonl
+    await this.rebuildIndex();
+  }
+
+  async unarchiveSession(sessionId: string): Promise<void> {
+    const file = await this.findSessionFile(sessionId);
+    if (!file) {
+      throw new Error(`会话文件未找到: ${sessionId}`);
+    }
+
+    // Check if  in archived_sessions
+    if (!file.includes('archived_sessions')) {
+      throw new Error('会话未归档');
+    }
+
+    // Move file back to sessions directory
+    const fileName = path.basename(file);
+    const destPath = path.join(this.paths.sessionsDir, fileName);
+    await fs.move(file, destPath, { overwrite: true });
+
+    // Rebuild index to update history.jsonl
+    await this.rebuildIndex();
+  }
+
   async deleteSessions(sessionIds: string[], options: { backupHistory?: boolean } = {}): Promise<DeleteResult> {
     const idSet = new Set(sessionIds);
     const removedFiles: string[] = [];
