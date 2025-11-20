@@ -507,14 +507,30 @@ export class HistoryManager {
       throw new Error(`会话文件未找到: ${sessionId}`);
     }
 
-    // Check if  in archived_sessions
+    // Check if in archived_sessions
     if (!file.includes('archived_sessions')) {
       throw new Error('会话未归档');
     }
 
-    // Move file back to sessions directory
     const fileName = path.basename(file);
-    const destPath = path.join(this.paths.sessionsDir, fileName);
+    
+    // Parse date from filename: rollout-YYYY-MM-DDTHH-MM-SS-UUID.jsonl
+    // Extract YYYY-MM-DD part
+    const dateMatch = fileName.match(/(\d{4})-(\d{2})-(\d{2})T/);
+    
+    let destPath: string;
+    if (dateMatch) {
+      const [, year, month, day] = dateMatch;
+      // Create date-structured path: sessions/YYYY/MM/DD/
+      const dateDir = path.join(this.paths.sessionsDir, year, month, day);
+      await fs.ensureDir(dateDir);
+      destPath = path.join(dateDir, fileName);
+    } else {
+      // Fallback: if date parsing fails, put in root sessions directory
+      destPath = path.join(this.paths.sessionsDir, fileName);
+    }
+    
+    // Move file back to sessions directory
     await fs.move(file, destPath, { overwrite: true });
 
     // Rebuild index to update history.jsonl
