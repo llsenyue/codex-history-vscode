@@ -908,19 +908,19 @@ class HistoryWebviewPanel {
         body.className = 'message-body';
         
         // Handle folding for long messages
-        const lines = (msg.text || '').split('\n');
+        const lines = (msg.text || '').split('\\n');
         if (lines.length > 30) {
-            const first15 = lines.slice(0, 15).join('\n');
-            const last15 = lines.slice(lines.length - 15).join('\n');
+            const first15 = lines.slice(0, 15).join('\\n');
+            const last15 = lines.slice(lines.length - 15).join('\\n');
             const hiddenCount = lines.length - 30;
-            const hiddenContent = lines.slice(15, lines.length - 15).join('\n');
+            const hiddenContent = lines.slice(15, lines.length - 15).join('\\n');
             
             const topPart = document.createElement('div');
             topPart.textContent = first15;
             
             const foldedPart = document.createElement('div');
             foldedPart.className = 'folded-content';
-            foldedPart.textContent = '\n' + hiddenContent + '\n';
+            foldedPart.textContent = '\\n' + hiddenContent + '\\n';
             
             const bottomPart = document.createElement('div');
             bottomPart.textContent = last15;
