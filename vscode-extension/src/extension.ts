@@ -800,7 +800,7 @@ class HistoryWebviewPanel {
             '</div>' +
             '<div class="meta">' +
               subtitleHtml +
-              dateStr + ' · ' + session.count + ' 条消息' +
+              dateStr + ' · <span class="turn-count"><strong>' + session.count + '</strong> 轮对话</span>' +
               remarkHtml +
             '</div>' +
           '</div>';

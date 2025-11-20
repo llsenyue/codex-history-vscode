@@ -13,6 +13,7 @@ interface HistoryLine {
   text?: string; // Deprecated, kept for compatibility
   first_text?: string; // First user message
   last_text?: string; // Last message
+  turn_count?: number; // Number of conversation turns
   is_archived?: boolean;
 }
 
@@ -81,7 +82,7 @@ export class HistoryManager {
           lastTs: line.ts,
           firstText: cleanFirstText(line.first_text || truncatedText),
           lastText: line.last_text || truncatedText,
-          count: 1,
+          count: line.turn_count || 1,
           pinned: pinnedSet.has(line.session_id),
           remark: remarks[line.session_id] || undefined,
           isArchived: line.is_archived
@@ -303,6 +304,7 @@ export class HistoryManager {
 
             // Find the first user message for the title
             let firstText = '';
+            let turnCount = 0;
             
             // Helper function to check if text is a system prompt
             const isSystemPrompt = (text: string): boolean => {
@@ -343,11 +345,12 @@ export class HistoryManager {
                         }
                     }
                     // Legacy format: role: "user"
-                    else if (parsed.role === 'user') {
-                        const text = parsed.content || parsed.text || '';
-                        if (!isSystemPrompt(text)) {
-                            firstText = text;
-                            break;
+                     if (parsed.type === 'user_item') {
+                        const text = parsed.payload.content;
+                        if (text && !isSystemPrompt(text)) {
+                            if (!firstText) firstText = text;
+                            lastText = text;
+                            turnCount++;
                         }
                     }
                     // Another format: type: "response_item" with payload.role: "user"
@@ -367,6 +370,7 @@ export class HistoryManager {
                                 firstText = match[1].trim();
                                 if (firstText) break;
                             }
+                            turnCount++;
                         }
                     }
                 } catch (e) {}
@@ -401,6 +405,7 @@ export class HistoryManager {
                 ts: tsNumber,
                 first_text: firstText,
                 last_text: lastText,
+                turn_count: turnCount,
                 is_archived: isArchived
             });
         }
@@ -434,7 +439,9 @@ export class HistoryManager {
     }
 
     const messages: SessionMessage[] = [];
-
+    let lastText = '';
+    let turnCount = 0;
+        
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, 'utf-8'),
       crlfDelay: Infinity,
