@@ -678,7 +678,7 @@ class HistoryWebviewPanel {
     <div class="controls">
       <input id="searchInput" type="text" placeholder="搜索会话..." />
       <label><input id="pinnedOnly" type="checkbox" /> 仅置顶</label>
-      <label><input id="hideAgents" type="checkbox" checked /> 屏蔽 Agents</label>
+      <label><input id="hideAgents" type="checkbox" checked /> 屏蔽 AGENTS.md</label>
       <button id="refreshBtn">刷新</button>
       <button id="batchDeleteEmptyBtn" style="background-color: var(--vscode-editorWarning-foreground); color: var(--vscode-editor-background);">批量删除空会话</button>
     </div>
