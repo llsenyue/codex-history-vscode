@@ -775,8 +775,6 @@ class HistoryWebviewPanel {
             selectedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
         }, 100);
-      }
-        }, 100);
       } else if (message.type === 'refresh') {
         fetchSessions();
       }
