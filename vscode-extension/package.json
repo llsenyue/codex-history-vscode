@@ -1,0 +1,106 @@
+{
+  "name": "codex-history-vscode",
+  "displayName": "Codex History Manager",
+  "version": "0.0.8-beta.2",
+  "description": "在 VS Code 内浏览、预览并管理 Codex 历史对话",
+  "publisher": "llsenyue",
+  "main": "./out/extension.js",
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:codexHistory.openManager",
+    "onView:codexHistory.sidebar"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexHistory.openManager",
+        "title": "打开 Codex 历史管理",
+        "category": "Codex History"
+      },
+      {
+        "command": "codexHistory.refreshSidebar",
+        "title": "刷新列表",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexHistory.resumeInTerminal",
+        "title": "在终端恢复",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "codexHistory.rebuildIndex",
+        "title": "重建索引",
+        "icon": "$(database)"
+      }
+    ],
+    "configuration": {
+      "title": "Codex History",
+      "properties": {
+        "codexHistory.codexHome": {
+          "type": "string",
+          "default": null,
+          "description": "Codex 数据目录路径 (.codex)。如果在 WSL 中想读取 Windows 下的记录，请填写 Windows 路径（如 /mnt/c/Users/YourName/.codex）。留空则使用默认路径 (~/.codex)。"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codex-history-container",
+          "title": "Codex History",
+          "icon": "$(history)"
+        }
+      ]
+    },
+    "views": {
+      "codex-history-container": [
+        {
+          "id": "codexHistory.sidebar",
+          "name": "Recent Sessions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexHistory.refreshSidebar",
+          "when": "view == codexHistory.sidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "codexHistory.rebuildIndex",
+          "when": "view == codexHistory.sidebar",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codexHistory.resumeInTerminal",
+          "when": "view == codexHistory.sidebar && viewItem == session",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p ."
+  },
+  "dependencies": {
+    "dayjs": "^1.11.19",
+    "fast-glob": "^3.3.3",
+    "fs-extra": "^11.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/vscode": "^1.106.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
