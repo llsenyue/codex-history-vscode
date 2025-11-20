@@ -205,7 +205,7 @@ class HistoryWebviewPanel {
         }
         const resumeCmd = await this.manager.getResumeCommand(message.payload.sessionId);
         await vscode.env.clipboard.writeText(resumeCmd);
-        vscode.window.showInformationMessage('Resume 命令已复制到剪贴板');
+        // No notification - user gets feedback from clipboard
         break;
       case 'pinToggle':
         await this.handlePin(message.payload.sessionId);
@@ -284,10 +284,10 @@ class HistoryWebviewPanel {
     const pinned = this.sessionsCache.find((s) => s.sessionId === sessionId)?.pinned ?? false;
     if (pinned) {
       await this.manager.unpin(sessionId);
-      vscode.window.showInformationMessage(`已取消置顶 ${sessionId}`);
+      // No notification - visual feedback from UI refresh is sufficient
     } else {
       await this.manager.pin(sessionId);
-      vscode.window.showInformationMessage(`已置顶 ${sessionId}`);
+      // No notification - visual feedback from UI refresh is sufficient
     }
     
     // Refresh sidebar
@@ -314,7 +314,7 @@ class HistoryWebviewPanel {
     const currentIndex = this.sessionsCache.findIndex(s => s.sessionId === sessionId);
     
     await this.manager.deleteSessions([sessionId], { backupHistory: true });
-    vscode.window.showInformationMessage(`已删除 ${sessionId}`);
+    // No notification - visual feedback from list update is sufficient
     
     // Refresh sidebar
     this.sidebarProvider.refresh();
@@ -391,7 +391,7 @@ class HistoryWebviewPanel {
 
   private async handleRemark(sessionId: string, remark: string) {
     await this.manager.setRemark(sessionId, remark);
-    vscode.window.showInformationMessage('备注已保存');
+    // No notification - user gets feedback from button/input interaction
     
     // Refresh sidebar to show updated remark
     this.sidebarProvider.refresh();
@@ -406,10 +406,10 @@ class HistoryWebviewPanel {
     try {
       if (isArchived) {
         await this.manager.unarchiveSession(sessionId);
-        vscode.window.showInformationMessage(`已取消归档 ${sessionId}`);
+        // No notification - visual feedback from UI refresh is sufficient
       } else {
         await this.manager.archiveSession(sessionId);
-        vscode.window.showInformationMessage(`已归档 ${sessionId}`);
+        // No notification - visual feedback from UI refresh is sufficient
       }
       
       // Refresh sidebar
