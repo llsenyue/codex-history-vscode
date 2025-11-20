@@ -419,11 +419,19 @@ export class HistoryManager {
 
     // 5. Write to history file
     progress?.report({ message: '正在写入索引文件...' });
-    const stream = fs.createWriteStream(historyFile, { flags: 'w' });
-    for (const line of newHistoryLines) {
-      stream.write(JSON.stringify(line) + '\n');
-    }
-    stream.end();
+    
+    // Use Promise to ensure file is fully written before proceeding
+    await new Promise<void>((resolve, reject) => {
+      const stream = fs.createWriteStream(historyFile, { flags: 'w' });
+      
+      stream.on('error', reject);
+      stream.on('finish', resolve);
+      
+      for (const line of newHistoryLines) {
+        stream.write(JSON.stringify(line) + '\n');
+      }
+      stream.end();
+    });
     
     console.log(`[Manager] Rebuilt index with ${newHistoryLines.length} sessions`);
   }
