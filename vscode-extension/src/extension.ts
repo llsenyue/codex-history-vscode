@@ -9,7 +9,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const manager = await createHistoryManager();
   
   const sidebarProvider = new SidebarProvider(manager);
-  vscode.window.registerTreeDataProvider('codexHistory.sidebar', sidebarProvider);
+  const treeView = vscode.window.createTreeView('codexHistory.sidebar', { treeDataProvider: sidebarProvider });
   
   context.subscriptions.push(
     vscode.commands.registerCommand('codexHistory.refreshSidebar', () => {
@@ -62,6 +62,9 @@ export async function activate(context: vscode.ExtensionContext) {
             }, async (progress) => {
                 await manager.rebuildIndex(progress);
                 sidebarProvider.refresh();
+                if (HistoryWebviewPanel.currentPanel) {
+                    HistoryWebviewPanel.currentPanel.refresh();
+                }
                 vscode.window.showInformationMessage('索引重建完成');
             });
         }
@@ -69,7 +72,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   const command = vscode.commands.registerCommand('codexHistory.openManager', (sessionId?: string) => {
-    HistoryWebviewPanel.createOrShow(context, manager, sidebarProvider, sessionId);
+    HistoryWebviewPanel.createOrShow(context, manager, sidebarProvider, treeView, sessionId);
   });
 
   context.subscriptions.push(command);
@@ -111,14 +114,15 @@ class HistoryWebviewPanel {
   private constructor(
     private readonly panel: vscode.WebviewPanel, 
     private readonly manager: HistoryManager,
-    private readonly sidebarProvider: any
+    private readonly sidebarProvider: SidebarProvider,
+    private readonly treeView: vscode.TreeView<any>
   ) {
     this.panel.webview.onDidReceiveMessage((msg: PanelMessage) => {
       this.onMessage(msg).catch((err) => this.handleError(err));
     });
   }
 
-  static createOrShow(context: vscode.ExtensionContext, manager: HistoryManager, sidebarProvider: any, initialSessionId?: string) {
+  static createOrShow(context: vscode.ExtensionContext, manager: HistoryManager, sidebarProvider: SidebarProvider, treeView: vscode.TreeView<any>, initialSessionId?: string) {
     if (HistoryWebviewPanel.currentPanel) {
       HistoryWebviewPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
       if (initialSessionId) {
@@ -134,7 +138,7 @@ class HistoryWebviewPanel {
       retainContextWhenHidden: true,
     });
 
-    const instance = new HistoryWebviewPanel(panel, manager, sidebarProvider);
+    const instance = new HistoryWebviewPanel(panel, manager, sidebarProvider, treeView);
     HistoryWebviewPanel.currentPanel = instance;
     
     if (initialSessionId) {
@@ -167,6 +171,15 @@ class HistoryWebviewPanel {
         break;
       case 'selectSession':
         await this.sendPreview(message.payload.sessionId, message.payload.hideAgents);
+        // Sync to sidebar
+        const item = this.sidebarProvider.getItem(message.payload.sessionId);
+        if (item) {
+            try {
+                this.treeView.reveal(item, { select: true, focus: false, expand: false });
+            } catch (e) {
+                console.error('[Extension] Failed to reveal in sidebar:', e);
+            }
+        }
         break;
       case 'copyResume':
         const cmd = await this.manager.getResumeCommand(message.payload.sessionId);

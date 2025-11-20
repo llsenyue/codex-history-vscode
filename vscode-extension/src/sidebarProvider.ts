@@ -18,6 +18,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<SessionItem> {
     return element;
   }
 
+  private _cachedItems: SessionItem[] = [];
+
   async getChildren(element?: SessionItem): Promise<SessionItem[]> {
     if (element) {
       return [];
@@ -26,11 +28,16 @@ export class SidebarProvider implements vscode.TreeDataProvider<SessionItem> {
     try {
       // 获取最近的会话（无限制）
       const sessions = await this.manager.listSummaries({ limit: 1000, hideAgents: true });
-      return sessions.map((s) => new SessionItem(s));
+      this._cachedItems = sessions.map((s) => new SessionItem(s));
+      return this._cachedItems;
     } catch (error) {
       vscode.window.showErrorMessage('无法加载会话列表: ' + error);
       return [];
     }
+  }
+
+  getItem(sessionId: string): SessionItem | undefined {
+    return this._cachedItems.find(item => item.session.sessionId === sessionId);
   }
 }
 
