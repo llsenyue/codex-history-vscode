@@ -858,15 +858,16 @@ class HistoryWebviewPanel {
         // Use firstText as title if available, otherwise sessionId
         const title = session.firstText ? (session.firstText.length > 50 ? session.firstText.substring(0, 50) + '...' : session.firstText) : session.sessionId;
         const subtitle = session.firstText ? session.sessionId : '';
-        const pinIcon = session.pinned ? '<span class="codicon codicon-pin"></span>' : '';
+        const pinIcon = session.pinned ? '<span style="color: var(--vscode-charts-yellow); margin-right: 4px;">⭐</span>' : '';
         const archiveBadge = session.isArchived ? '<span class="archive-badge" title="已归档">📦 归档</span>' : '';
         const subtitleHtml = subtitle ? '<span class="session-id-subtitle">' + subtitle + '</span><br>' : '';
         const remarkHtml = session.remark ? '<br><span class="remark-badge">' + session.remark + '</span>' : '';
         
         return '<div class="session' + activeClass + (session.isArchived ? ' archived-session' : '') + '" onclick="selectSession(\\'' + session.sessionId + '\\')">' +
             '<div class="title">' +
+              pinIcon +
               '<span class="session-title" title="' + (session.firstText || session.sessionId) + '">' + title + '</span>' +
-              pinIcon + archiveBadge +
+              archiveBadge +
             '</div>' +
             '<div class="meta">' +
               subtitleHtml +
