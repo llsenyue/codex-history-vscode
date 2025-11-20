@@ -12,7 +12,12 @@ export async function activate(context: vscode.ExtensionContext) {
   vscode.window.registerTreeDataProvider('codexHistory.sidebar', sidebarProvider);
   
   context.subscriptions.push(
-    vscode.commands.registerCommand('codexHistory.refreshSidebar', () => sidebarProvider.refresh())
+    vscode.commands.registerCommand('codexHistory.refreshSidebar', () => {
+      sidebarProvider.refresh();
+      if (HistoryWebviewPanel.currentPanel) {
+        HistoryWebviewPanel.currentPanel.refresh();
+      }
+    })
   );
 
   context.subscriptions.push(
@@ -146,6 +151,10 @@ class HistoryWebviewPanel {
     });
 
     panel.webview.html = instance.getHtml();
+  }
+
+  public refresh() {
+    this.panel.webview.postMessage({ type: 'refresh' });
   }
 
   private async onMessage(message: PanelMessage) {
@@ -766,6 +775,10 @@ class HistoryWebviewPanel {
             selectedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
         }, 100);
+      }
+        }, 100);
+      } else if (message.type === 'refresh') {
+        fetchSessions();
       }
     });
 
