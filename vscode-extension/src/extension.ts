@@ -34,6 +34,17 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('无法获取会话 ID');
         return;
       }
+      
+      // Check if session is archived
+      const summaries = await manager.listSummaries({ hideAgents: true, limit: 1000 });
+      const session = summaries.find(s => s.sessionId === sessionId);
+      if (session?.isArchived) {
+        vscode.window.showWarningMessage(
+          '⚠️ 归档会话无法 resume！\n\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先取消归档。',
+          { modal: true }
+        );
+        return;
+      }
 
       const terminalName = 'Codex CLI';
       let terminal = vscode.window.terminals.find(t => t.name === terminalName);
@@ -823,23 +834,11 @@ class HistoryWebviewPanel {
 
     function copyResumeCommand() {
       if (!state.selectedId) return;
-      // Check if session is archived
-      const session = state.sessions.find(s => s.sessionId === state.selectedId);
-      if (session && session.isArchived) {
-        alert('⚠️ 归档会话无法 resume！\\n\\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先点击"取消归档"按钮。');
-        return;
-      }
       vscode.postMessage({ type: 'copyResume', payload: { sessionId: state.selectedId } });
     }
 
     function resumeInTerminal() {
       if (!state.selectedId) return;
-      // Check if session is archived
-      const session = state.sessions.find(s => s.sessionId === state.selectedId);
-      if (session && session.isArchived) {
-        alert('⚠️ 归档会话无法 resume！\\n\\nCodex 的 resume 命令只能加载 sessions 目录中的会话。如需 resume 此会话，请先点击"取消归档"按钮。');
-        return;
-      }
       vscode.postMessage({ type: 'resumeInTerminal', payload: { sessionId: state.selectedId } });
     }
 
