@@ -118,6 +118,8 @@ class HistoryWebviewPanel {
       HistoryWebviewPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
       if (initialSessionId) {
         HistoryWebviewPanel.currentPanel.sendPreview(initialSessionId, true);
+        // Sync selection in list
+        HistoryWebviewPanel.currentPanel.panel.webview.postMessage({ type: 'selectSession', payload: { sessionId: initialSessionId } });
       }
       return;
     }
@@ -753,6 +755,17 @@ class HistoryWebviewPanel {
         state.selectedId = message.payload.sessionId;
         renderSessions();
         vscode.postMessage({ type: 'selectSession', payload: { sessionId: state.selectedId, hideAgents: state.hideAgents } });
+      } else if (message.type === 'selectSession') {
+        // Handle selection from sidebar
+        state.selectedId = message.payload.sessionId;
+        renderSessions();
+        // Scroll to selected item
+        setTimeout(() => {
+          const selectedEl = document.querySelector('.session.selected');
+          if (selectedEl) {
+            selectedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
       }
     });
 
