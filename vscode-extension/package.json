@@ -1,7 +1,7 @@
 {
   "name": "codex-history-vscode",
   "displayName": "Codex History Manager",
-  "version": "0.0.8-beta.9",
+  "version": "0.0.8-beta.10",
   "description": "在 VS Code 内浏览、预览并管理 Codex 历史对话",
   "publisher": "llsenyue",
   "main": "./out/extension.js",

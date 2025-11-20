@@ -638,6 +638,36 @@ class HistoryWebviewPanel {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+
+    .folded-content {
+      display: none;
+    }
+    
+    .expand-btn {
+      display: block;
+      width: 100%;
+      padding: 4px;
+      margin: 8px 0;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      cursor: pointer;
+      font-size: 0.9em;
+      text-align: center;
+      border-radius: 2px;
+    }
+    
+    .expand-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .preview-header-controls {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
   </style>
 </head>
 <body>
@@ -844,28 +874,101 @@ class HistoryWebviewPanel {
     function renderPreview(data) {
       remarkInput.value = data.remark || '';
       previewEl.innerHTML = '';
+      
+      // Add global toggle button if there are messages
+      if (data.messages && data.messages.length > 0) {
+        const headerControls = document.createElement('div');
+        headerControls.className = 'preview-header-controls';
+        
+        const toggleAllBtn = document.createElement('button');
+        toggleAllBtn.textContent = '全部展开/折叠';
+        toggleAllBtn.className = 'expand-btn';
+        toggleAllBtn.style.width = 'auto';
+        toggleAllBtn.style.margin = '0';
+        toggleAllBtn.onclick = () => toggleAllFolded();
+        
+        headerControls.appendChild(toggleAllBtn);
+        previewEl.appendChild(headerControls);
+      }
+
       if (!data.messages || data.messages.length === 0) {
         previewEl.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.6">无消息记录</div>';
         return;
       }
-      data.messages.forEach((msg, idx) => {
-        const node = document.createElement('div');
-        node.className = 'message';
+      data.messages.forEach(msg => {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message';
         
         const header = document.createElement('div');
         header.className = 'message-header';
-        header.innerHTML = \`<span>#\${idx + 1} \${msg.role}</span><span>\${msg.timestamp || ''}</span>\`;
+        header.innerHTML = '<span>' + (msg.role === 'user' ? '👤 User' : '🤖 Assistant') + '</span>' +
+                           '<span style="opacity:0.6;font-size:0.8em">' + new Date(msg.timestamp).toLocaleString() + '</span>';
         
         const body = document.createElement('div');
         body.className = 'message-body';
-        body.textContent = msg.text || '';
         
-        node.appendChild(header);
-        node.appendChild(body);
-        previewEl.appendChild(node);
+        // Handle folding for long messages
+        const lines = (msg.text || '').split('\n');
+        if (lines.length > 30) {
+            const first15 = lines.slice(0, 15).join('\n');
+            const last15 = lines.slice(lines.length - 15).join('\n');
+            const hiddenCount = lines.length - 30;
+            const hiddenContent = lines.slice(15, lines.length - 15).join('\n');
+            
+            const topPart = document.createElement('div');
+            topPart.textContent = first15;
+            
+            const foldedPart = document.createElement('div');
+            foldedPart.className = 'folded-content';
+            foldedPart.textContent = '\n' + hiddenContent + '\n';
+            
+            const bottomPart = document.createElement('div');
+            bottomPart.textContent = last15;
+            
+            const expandBtn = document.createElement('button');
+            expandBtn.className = 'expand-btn';
+            expandBtn.textContent = 'Show ' + hiddenCount + ' hidden lines';
+            expandBtn.onclick = function() {
+                const isHidden = foldedPart.style.display === 'none' || foldedPart.style.display === '';
+                foldedPart.style.display = isHidden ? 'block' : 'none';
+                expandBtn.textContent = isHidden ? 'Collapse' : 'Show ' + hiddenCount + ' hidden lines';
+            };
+            
+            body.appendChild(topPart);
+            body.appendChild(expandBtn);
+            body.appendChild(foldedPart);
+            body.appendChild(bottomPart);
+        } else {
+            body.textContent = msg.text || '';
+        }
+        
+        msgDiv.appendChild(header);
+        msgDiv.appendChild(body);
+        previewEl.appendChild(msgDiv);
       });
     }
-  <\/script>
+    
+    function toggleAllFolded() {
+        const foldedContents = document.querySelectorAll('.folded-content');
+        const expandBtns = document.querySelectorAll('.expand-btn:not(.preview-header-controls button)');
+        
+        // Check state of first item to decide whether to expand or collapse all
+        if (foldedContents.length === 0) return;
+        
+        const firstHidden = foldedContents[0].style.display === 'none' || foldedContents[0].style.display === '';
+        const newState = firstHidden ? 'block' : 'none';
+        
+        foldedContents.forEach(el => el.style.display = newState);
+        expandBtns.forEach(btn => {
+            // Extract count from text
+            const match = btn.textContent.match(/Show (\d+) hidden lines/);
+            const count = match ? match[1] : (btn.getAttribute('data-count') || '...');
+            if (match) btn.setAttribute('data-count', count);
+            
+            btn.textContent = newState === 'block' ? 'Collapse' : 'Show ' + (btn.getAttribute('data-count') || '...') + ' hidden lines';
+        });
+    }
+  </script>
 </body>
 </html>`;
   }
