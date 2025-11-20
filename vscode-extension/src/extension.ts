@@ -691,6 +691,7 @@ class HistoryWebviewPanel {
           <div class="buttons">
             <button onclick="copyResumeCommand()">复制 Resume 命令</button>
             <button onclick="resumeInTerminal()">在终端恢复 ▶️</button>
+            <button id="pinBtn" disabled>📌 置顶</button>
             <button onclick="deleteSession()" style="background-color: var(--vscode-errorForeground); color: var(--vscode-editor-background);">删除会话</button>
           </div>
           <div class="remark-group">
@@ -714,7 +715,7 @@ class HistoryWebviewPanel {
     const hideAgents = document.getElementById('hideAgents');
     const refreshBtn = document.getElementById('refreshBtn');
     const batchDeleteEmptyBtn = document.getElementById('batchDeleteEmptyBtn');
-    // const copyBtn = document.getElementById('copyBtn'); // Removed
+    const pinBtn = document.getElementById('pinBtn');
     // const pinBtn = document = document.getElementById('pinBtn');   // Removed
     // const deleteBtn = document.getElementById('deleteBtn'); // Removed
     const remarkInput = document.getElementById('remarkInput');
@@ -766,14 +767,12 @@ class HistoryWebviewPanel {
       }
     }
 
-    /* pinBtn removed
     pinBtn.addEventListener('click', () => {
       if (state.selectedId) {
         setLoading(true);
         vscode.postMessage({ type: 'pinToggle', payload: { sessionId: state.selectedId } });
       }
     });
-    */
     saveRemarkBtn.addEventListener('click', () => {
       if (!state.selectedId) return;
       setLoading(true);
@@ -864,7 +863,7 @@ class HistoryWebviewPanel {
 
     function selectSession(id) {
       state.selectedId = id;
-      // copyBtn.disabled = pinBtn.disabled = deleteBtn.disabled = saveRemarkBtn.disabled = remarkInput.disabled = !id;
+      pinBtn.disabled = saveRemarkBtn.disabled = remarkInput.disabled = !id;
       saveRemarkBtn.disabled = remarkInput.disabled = !id;
       renderSessions();
       setLoading(true);
