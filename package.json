@@ -1,0 +1,46 @@
+{
+  "name": "codex-plug-resumer",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "codex-history": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "ts-node --esm src/index.ts",
+    "start": "node dist/index.js",
+    "package:bin": "npm run build && pkg pkg-entry.cjs --targets node18-linux-x64,node18-win-x64,node18-macos-x64 --output build/codex-history"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "cli-table3": "^0.6.5",
+    "clipboardy": "^5.0.0",
+    "commander": "^14.0.2",
+    "dayjs": "^1.11.19",
+    "express": "^5.1.0",
+    "fast-glob": "^3.3.3",
+    "fs-extra": "^11.3.2",
+    "ink": "^6.5.0",
+    "open": "^11.0.0",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.6",
+    "pkg": "^5.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*"
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex 历史管理器</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <header>
+        <h1>Codex 历史管理器</h1>
+        <p>浏览、预览、置顶、删除会话，并复制 <code>codex resume</code> 命令。</p>
+      </header>
+      <section class="controls">
+        <input id="searchInput" type="text" placeholder="输入关键字筛选" />
+        <label class="checkbox">
+          <input id="pinnedOnly" type="checkbox" /> 仅显示置顶
+        </label>
+        <label class="checkbox">
+          <input id="hideAgents" type="checkbox" checked /> 屏蔽 AGENTS.md
+        </label>
+        <button id="refreshBtn" type="button">刷新</button>
+      </section>
+      <main class="content">
+        <section class="panel sessions">
+          <div class="panel-header">会话列表</div>
+          <div id="sessionsContainer" class="list"></div>
+        </section>
+        <section class="panel preview">
+          <div class="panel-header">会话预览</div>
+          <div class="preview-actions">
+            <button id="copyBtn" type="button" disabled>复制 resume 命令</button>
+            <button id="pinBtn" type="button" disabled>置顶</button>
+            <button id="deleteBtn" type="button" disabled class="danger">删除</button>
+          </div>
+          <div class="remark-editor">
+            <input id="remarkInput" type="text" placeholder="添加备注..." disabled />
+            <button id="remarkSaveBtn" type="button" disabled>保存备注</button>
+          </div>
+          <div id="remarkDisplay" class="remark-display"></div>
+          <div id="previewMeta" class="preview-meta"></div>
+          <div id="previewContainer" class="preview-body"></div>
+        </section>
+      </main>
+      <footer id="statusBar" class="status">准备就绪</footer>
+    </div>
+    <div id="confirmModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-title">确认操作</div>
+        <div id="confirmMessage" class="modal-message"></div>
+        <div class="modal-actions">
+          <button id="confirmCancelBtn" type="button">取消</button>
+          <button id="confirmOkBtn" type="button" class="danger">确认</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

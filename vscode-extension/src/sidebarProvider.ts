@@ -39,6 +39,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<SessionItem> {
   getItem(sessionId: string): SessionItem | undefined {
     return this._cachedItems.find(item => item.session.sessionId === sessionId);
   }
+
+  // Required for treeView.reveal() to work
+  // Since this is a flat list, all items have no parent
+  getParent(element: SessionItem): SessionItem | undefined {
+    return undefined;
+  }
 }
 
 class SessionItem extends vscode.TreeItem {

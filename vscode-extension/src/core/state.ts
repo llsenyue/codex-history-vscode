@@ -97,4 +97,12 @@ export class StateStore {
     await this.load();
     return { ...this.state.remarks };
   }
+
+  async getSessionState(sessionId: string): Promise<{ pinned: boolean; remark: string }> {
+    await this.load();
+    return {
+      pinned: this.state.pinned.includes(sessionId),
+      remark: this.state.remarks[sessionId] || '',
+    };
+  }
 }

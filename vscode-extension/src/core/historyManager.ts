@@ -51,16 +51,19 @@ export class HistoryManager {
     console.log(`[Manager] Read ${lines.length} lines from history file`);
     const pinnedSet = await this.state.getPinnedSet();
     const remarks = await this.state.getRemarks();
-    const searchText = options.search?.toLowerCase();
+    const searchTerms = options.search?.toLowerCase().split(/\s+/).filter(t => t.length > 0) || [];
 
     const summaries = new Map<string, SessionSummary>();
 
     for (const line of lines) {
       const text = line.text || line.last_text || '';
-      if (searchText && !text.toLowerCase().includes(searchText) && !(line.first_text || '').toLowerCase().includes(searchText)) {
-        continue;
+      
+      if (searchTerms.length > 0) {
+          const content = (text + ' ' + (line.first_text || '')).toLowerCase();
+          if (!searchTerms.every(term => content.includes(term))) {
+              continue;
+          }
       }
-
       const existing = summaries.get(line.session_id);
       const truncatedText = text.length > 200 ? text.substring(0, 200) + '...' : text;
       
@@ -268,147 +271,14 @@ export class HistoryManager {
     for (const file of files) {
       processedCount++;
       if (processedCount % 10 === 0) {
-        progress?.report({ message: `正在处理: ${processedCount}/${files.length}`, increment: (10 / files.length) * 100 });
+        progress?.report({ message: `正在扫描 (${processedCount}/${files.length})...`, increment: (10 / files.length) * 100 });
       }
 
-      const sessionId = path.basename(file, '.jsonl');
-      
       try {
-        const content = await fs.readFile(file, 'utf-8');
-        const lines = content.split('\n').filter(line => line.trim() !== '');
-        
-        if (lines.length === 0) continue;
-
-        let firstLine: any = null;
-        let lastLine: any = null;
-
-        // Try to parse first valid line
-        for (const lineStr of lines) {
-            try {
-                firstLine = JSON.parse(lineStr);
-                break;
-            } catch (e) {}
+        const sessionData = await this.parseSessionFile(file);
+        if (sessionData) {
+          newHistoryLines.push(sessionData);
         }
-
-        // Try to parse last valid line (backwards)
-        for (let i = lines.length - 1; i >= 0; i--) {
-            try {
-                lastLine = JSON.parse(lines[i]);
-                break;
-            } catch (e) {}
-        }
-
-        if (firstLine && lastLine) {
-            // Find the last message text (usually from the last line)
-            let lastText = lastLine.content || lastLine.text || '';
-
-            // Find the first user message for the title
-            let firstText = '';
-            let turnCount = 0;
-            
-            // Helper function to check if text is a system prompt
-            const isSystemPrompt = (text: string): boolean => {
-                if (!text) return true;
-                const lowerText = text.toLowerCase();
-                // Filter out common system prompts
-                if (lowerText.includes('<environment_context>')) return true;
-                if (lowerText.includes('agents.md')) return true;
-                if (lowerText.includes('# context from my ide setup')) return true;
-                if (lowerText.startsWith('## active file:')) return true;
-                if (lowerText.startsWith('## open tabs:')) return true;
-                // Only environment context without actual user message
-                if (text.trim().startsWith('<') && text.trim().endsWith('>')) return true;
-                return false;
-            };
-            
-            for (const lineStr of lines) {
-                try {
-                    const parsed = JSON.parse(lineStr);
-                    
-                    // New format: type: "event_msg" with payload.type: "user_message"
-                    if (parsed.type === 'event_msg' && parsed.payload?.type === 'user_message') {
-                        const message = parsed.payload.message || '';
-                        let extractedText = '';
-                        
-                        // Extract just the user's actual request, skipping IDE context
-                        const match = message.match(/##\s*My request for Codex:\s*(.+)$/s);
-                        if (match && match[1]) {
-                            extractedText = match[1].trim();
-                        } else {
-                            extractedText = message.trim();
-                        }
-                        
-                        // Skip if it's a system prompt
-                        if (!isSystemPrompt(extractedText)) {
-                            if (!firstText) firstText = extractedText;
-                            turnCount++;
-                        }
-                    }
-                    // Legacy format: role: "user"
-                     if (parsed.type === 'user_item') {
-                        const text = parsed.payload.content;
-                        if (text && !isSystemPrompt(text)) {
-                            if (!firstText) firstText = text;
-                            lastText = text;
-                            turnCount++;
-                        }
-                    }
-                    // Another format: type: "response_item" with payload.role: "user"
-                    else if (parsed.type === 'response_item' && parsed.payload?.role === 'user') {
-                        const content = parsed.payload.content;
-                        if (Array.isArray(content) && content[0]?.text) {
-                            const text = content[0].text;
-                            
-                            // Skip if it's environment context
-                            if (isSystemPrompt(text)) {
-                                continue;
-                            }
-                            
-                            // Try to extract actual user request
-                            const match = text.match(/##\s*My request for Codex:\s*(.+)$/s);
-                            if (match && match[1]) {
-                                if (!firstText) firstText = match[1].trim();
-                            }
-                            turnCount++;
-                        }
-                    }
-                } catch (e) {}
-            }
-
-            if (!firstText && processedCount <= 5) {
-                 console.log(`[Manager] No user message found for ${sessionId}. First line: ${lines[0].substring(0, 100)}`);
-            }
-
-            // If no user message found, use a friendly fallback
-            if (!firstText) {
-                // Try to use the first line's content as last resort
-                const fallbackText = firstLine.content || firstLine.text || '';
-                if (fallbackText && !isSystemPrompt(fallbackText)) {
-                    firstText = fallbackText;
-                } else {
-                    // Use a friendly message for empty or cancelled sessions
-                    firstText = '(空会话)';
-                }
-            }
-
-            const isArchived = file.includes('archived_sessions');
-            
-            // Convert timestamp to number (milliseconds since epoch)
-            const timestamp = lastLine.ts || lastLine.timestamp || Date.now();
-            const tsNumber = typeof timestamp === 'string' 
-                ? new Date(timestamp).getTime() 
-                : timestamp;
-
-            newHistoryLines.push({
-                session_id: sessionId,
-                ts: tsNumber,
-                first_text: firstText,
-                last_text: lastText,
-                turn_count: turnCount,
-                is_archived: isArchived
-            });
-        }
-
       } catch (error) {
         console.error(`[Manager] Error processing file ${file}:`, error);
       }
@@ -478,6 +348,16 @@ export class HistoryManager {
     if (await fs.pathExists(historyFile)) {
       const lines = await this.readHistoryLines(false); // Don't filter by agents for this check
       lines.forEach(line => indexedSessions.add(line.session_id));
+      
+      // Safety check: if file exists but we found 0 sessions, something might be wrong with reading.
+      // To avoid duplicating everything, we should verify if the file is actually empty.
+      if (lines.length === 0) {
+          const stats = await fs.stat(historyFile);
+          if (stats.size > 100) {
+              console.warn('[Manager] History file exists and is not empty, but no sessions read. Aborting incremental update to prevent duplicates.');
+              return 0;
+          }
+      }
     }
     
     // Scan for all session files
@@ -492,7 +372,7 @@ export class HistoryManager {
       const files = await fg('**/*.jsonl', {
         cwd: dir,
         absolute: true,
-        ignore: ['**/trash/**'],
+        ignore: ['**/trash/**', '**/sessions_Recycle/**'],
       });
       allSessionFiles.push(...files);
     }
@@ -501,9 +381,10 @@ export class HistoryManager {
     const newSessions: Array<{ file: string; isArchived: boolean }> = [];
     for (const file of allSessionFiles) {
       const filename = path.basename(file);
-      const match = filename.match(/rollout-([\d-T]+)-([a-f0-9-]+)\.jsonl/i);
+      // Extract sessionId from filename (e.g., rollout-YYYY-MM-DDTHH-MM-SS-UUID.jsonl)
+      const match = filename.match(/rollout-[\d-T]+-([a-f0-9-]+)\.jsonl/i);
       if (match) {
-        const sessionId = match[2];
+        const sessionId = match[1]; // Use the UUID part as session_id
         if (!indexedSessions.has(sessionId)) {
           const isArchived = file.includes('archived_sessions');
           newSessions.push({ file, isArchived });
@@ -519,85 +400,14 @@ export class HistoryManager {
     console.log(`[Manager] Found ${newSessions.length} new session files, adding to index...`);
     
     // Process new sessions and append to history.jsonl
-    const newHistoryLines: any[] = [];
+    const newHistoryLines: HistoryLine[] = [];
     
-    for (const { file, isArchived } of newSessions) {
+    for (const { file } of newSessions) {
       try {
-        const content = await fs.readFile(file, 'utf-8');
-        const lines = content.split(/\r?\n/).filter(Boolean);
-        
-        if (lines.length === 0) continue;
-        
-        let firstLine: any = null;
-        let lastLine: any = null;
-        
-        // Parse first and last valid lines
-        for (const lineStr of lines) {
-          try {
-            firstLine = JSON.parse(lineStr);
-            break;
-          } catch (e) {}
+        const sessionData = await this.parseSessionFile(file);
+        if (sessionData) {
+          newHistoryLines.push(sessionData);
         }
-        
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            lastLine = JSON.parse(lines[i]);
-            break;
-          } catch (e) {}
-        }
-        
-        if (!firstLine || !lastLine) continue;
-        
-        // Extract session info  (similar logic to rebuildIndex)
-        let timestamp: number | string | undefined = firstLine.timestamp || firstLine.id;
-        if (typeof timestamp === 'string') {
-          timestamp = new Date(timestamp).getTime();
-        }
-        if (!timestamp || isNaN(timestamp as number)) continue;
-        
-        const sessionId = firstLine.id || path.basename(file).replace(/^rollout-[\d-T]+-/, '').replace(/\.jsonl$/, '');
-        
-        // Count turns and extract text
-        let turnCount = 0;
-        let firstText = '';
-        
-        // Helper to check system prompts
-        const isSystemPromptText = (text: string) => {
-          const lower = text.toLowerCase();
-          return lower.includes('you are in a project') || 
-                 lower.includes('agents.md') || 
-                 lower.includes('system:');
-        };
-        
-        for (const lineStr of lines) {
-          try {
-            const parsed = JSON.parse(lineStr);
-            if (parsed.type === 'tool_use' || parsed.type === 'user_item') {
-              const extractedText = parsed.payload?.content || parsed.payload?.text || '';
-              if (extractedText && !isSystemPromptText(extractedText)) {
-                if (!firstText) firstText = extractedText;
-                turnCount++;
-              }
-            }
-          } catch (e) {}
-        }
-        
-        // Clean and format first text
-        const cleanedFirstText = (() => {
-          if (!firstText) return '(空会话)';
-          const cleaned = firstText.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-          return cleaned.length > 80 ? cleaned.substring(0, 80) + '...' : cleaned;
-        })();
-        
-        newHistoryLines.push({
-          session_id: sessionId,
-          ts: timestamp,
-          first_text: cleanedFirstText,
-          last_text: cleanedFirstText,
-          turn_count: turnCount || 1,
-          is_archived: isArchived
-        });
-        
       } catch (error) {
         console.error(`[Manager] Error processing new file ${file}:`, error);
       }
@@ -621,6 +431,138 @@ export class HistoryManager {
     
     console.log(`[Manager] Added ${newHistoryLines.length} new sessions to index`);
     return newHistoryLines.length;
+  }
+
+  /**
+   * Shared logic to parse a session file and extract summary info
+   */
+  private async parseSessionFile(file: string): Promise<HistoryLine | null> {
+    const content = await fs.readFile(file, 'utf-8');
+    const lines = content.split(/\r?\n/).filter(Boolean);
+    
+    if (lines.length === 0) return null;
+
+    let firstLine: any = null;
+    let lastLine: any = null;
+
+    // Try to parse first valid line
+    for (const lineStr of lines) {
+        try {
+            firstLine = JSON.parse(lineStr);
+            break;
+        } catch (e) {}
+    }
+
+    // Try to parse last valid line (backwards)
+    for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+            lastLine = JSON.parse(lines[i]);
+            break;
+        } catch (e) {}
+    }
+
+    if (!firstLine || !lastLine) return null;
+
+    // Extract session info
+    let timestamp: number | string | undefined = firstLine.timestamp || firstLine.id;
+    // Convert string timestamp to number if needed
+    if (typeof timestamp === 'string') {
+        timestamp = new Date(timestamp).getTime();
+    }
+    
+    if (!timestamp || isNaN(timestamp as number)) return null;
+
+    const sessionId = firstLine.id || path.basename(file).replace(/^rollout-[\d-T]+-/, '').replace(/\.jsonl$/, '');
+    const isArchived = file.includes('archived_sessions');
+
+    // Extract text and turn count
+    let turnCount = 0;
+    let firstText = '';
+    let lastText = '';
+
+    // Helper to check system prompts
+    const isSystemPrompt = (text: string) => {
+        const lower = text.toLowerCase();
+        return lower.includes('you are in a project') || 
+               lower.includes('agents.md') || 
+               lower.includes('system:');
+    };
+    
+    // Helper to clean text
+    const cleanFirstText = (rawText: string) => {
+      if (!rawText) return '';
+      // Remove all line breaks (\r\n, \n, \r) and replace with space
+      const cleaned = rawText.replace(/[\r\n]+/g, ' ');
+      // Remove excessive whitespace
+      const trimmed = cleaned.replace(/\s+/g, ' ').trim();
+      // Limit to a reasonable display length
+      return trimmed.length > 80 ? trimmed.substring(0, 80) + '...' : trimmed;
+    };
+
+    for (const lineStr of lines) {
+        try {
+            const parsed = JSON.parse(lineStr);
+            
+            // New format: type: "event_msg" with payload.type: "user_message"
+            if (parsed.type === 'event_msg' && parsed.payload?.type === 'user_message') {
+                const message = parsed.payload.message || '';
+                let extractedText = '';
+                
+                // Extract just the user's actual request, skipping IDE context
+                const match = message.match(/##\s*My request for Codex:\s*(.+)$/s);
+                if (match && match[1]) {
+                    extractedText = match[1].trim();
+                } else {
+                    extractedText = message.trim();
+                }
+                
+                // Skip if it's a system prompt
+                if (!isSystemPrompt(extractedText)) {
+                    if (!firstText) firstText = extractedText;
+                    turnCount++;
+                }
+            }
+            // Legacy format: role: "user"
+             if (parsed.type === 'user_item') {
+                const text = parsed.payload.content;
+                if (text && !isSystemPrompt(text)) {
+                    if (!firstText) firstText = text;
+                    lastText = text; // Update lastText for user_item
+                    turnCount++;
+                }
+            }
+            // Another format: type: "response_item" with payload.role: "user"
+            else if (parsed.type === 'response_item' && parsed.payload?.role === 'user') {
+                const content = parsed.payload.content;
+                if (Array.isArray(content) && content[0]?.text) {
+                    const text = content[0].text;
+                    
+                    // Skip if it's environment context
+                    if (isSystemPrompt(text)) {
+                        continue;
+                    }
+                    
+                    // Try to extract actual user request
+                    const match = text.match(/##\s*My request for Codex:\s*(.+)$/s);
+                    if (match && match[1]) {
+                        if (!firstText) firstText = match[1].trim();
+                    }
+                    turnCount++;
+                }
+            }
+        } catch (e) {}
+    }
+
+    const cleanedFirstText = cleanFirstText(firstText || '(空会话)');
+
+    return {
+      session_id: sessionId,
+      ts: timestamp as number,
+      first_text: cleanedFirstText,
+      last_text: lastText || cleanedFirstText, // Fallback to first text if last text not found
+      turn_count: turnCount, // Return actual turn count (0 if empty)
+      is_archived: isArchived
+    };
   }
 
 
@@ -755,11 +697,7 @@ export class HistoryManager {
     // 2) 重写 history.jsonl，过滤掉对应会话
     const removedHistory = await this.rewriteHistoryExcluding(idSet, options.backupHistory !== false);
 
-    // 3) 取消置顶
-    for (const sessionId of idSet) {
-      await this.unpin(sessionId);
-      await this.state.setRemark(sessionId, '');
-    }
+    // NOTE: We do NOT clear state (pinned/remarks) here so they can be preserved when restored from recycle bin
 
     return { removedHistory, removedFiles, notFoundFiles };
   }
@@ -779,6 +717,145 @@ export class HistoryManager {
 
   async setRemark(sessionId: string, remark: string): Promise<void> {
     await this.state.setRemark(sessionId, remark);
+  }
+
+  async listRecycleBin(): Promise<SessionSummary[]> {
+    const trashDir = this.paths.trashDir;
+    if (!(await fs.pathExists(trashDir))) {
+      return [];
+    }
+
+    const files = await fg('**/*.jsonl', {
+      cwd: trashDir,
+      absolute: true,
+    });
+
+    const summaries: SessionSummary[] = [];
+
+    // Get active session IDs to filter them out
+    const activeSessions = await this.readHistoryLines(false);
+    const activeSessionIds = new Set(activeSessions.map(s => s.session_id));
+
+    for (const file of files) {
+      try {
+        const sessionData = await this.parseSessionFile(file);
+        if (sessionData) {
+          // Filter out active sessions
+          if (activeSessionIds.has(sessionData.session_id)) {
+            continue;
+          }
+
+          // Filter out empty sessions (count=0)
+          // We trust turn_count=0 means it's empty (system prompts don't count)
+          if (sessionData.turn_count === 0) {
+            continue;
+          }
+
+          // Strict filter: if text is explicitly "(空会话)", do not show in recycle bin
+          if (sessionData.first_text === '(空会话)') {
+              continue;
+          }
+
+          // Get file modification time as deletion time approximation if needed
+          // For now just use session data
+          const stats = await fs.stat(file);
+          
+          // Get metadata from state
+          const state = await this.state.getSessionState(sessionData.session_id);
+          const isArchived = file.includes('archived_sessions');
+          
+          summaries.push({
+            sessionId: sessionData.session_id,
+            firstTs: sessionData.ts,
+            lastTs: stats.mtimeMs, // Use modification time (likely deletion time) for sorting
+            firstText: sessionData.first_text || '(空会话)',
+            lastText: sessionData.last_text || '',
+            count: sessionData.turn_count || 0,
+            pinned: state.pinned,
+            isArchived: isArchived,
+            remark: state.remark
+          });
+        }
+      } catch (error) {
+        console.error(`[Manager] Error parsing recycle bin file ${file}:`, error);
+      }
+    }
+
+    // Sort by deletion time (mtime) descending
+    return summaries.sort((a, b) => b.lastTs - a.lastTs);
+  }
+
+  async getRecycleBinSessionContent(sessionId: string): Promise<string[]> {
+    const trashDir = this.paths.trashDir;
+    const files = await fg(`**/*${sessionId}*.jsonl`, {
+      cwd: trashDir,
+      absolute: true,
+    });
+
+    if (files.length === 0) {
+      throw new Error(`在回收站中未找到会话 ${sessionId}`);
+    }
+
+    const file = files[0];
+    const content = await fs.readFile(file, 'utf-8');
+    const lines = content.split('\n').filter(line => line.trim());
+    const historyLines: string[] = [];
+
+    for (const line of lines) {
+      try {
+        const data = JSON.parse(line);
+        // Format similar to getSessionHistory
+        if (data.role === 'user') {
+          historyLines.push(`\n👤 **User**\n${data.content}\n`);
+        } else if (data.role === 'model' || data.role === 'assistant') {
+          historyLines.push(`\n🤖 **Model**\n${data.content}\n`);
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+    
+    return historyLines;
+  }
+
+  async restoreFromRecycleBin(sessionId: string): Promise<void> {
+    const trashDir = this.paths.trashDir;
+    
+    // Find file in trash
+    const files = await fg(`**/*${sessionId}*.jsonl`, {
+      cwd: trashDir,
+      absolute: true,
+    });
+
+    if (files.length === 0) {
+      throw new Error(`在回收站中未找到会话 ${sessionId}`);
+    }
+
+    const sourceFile = files[0];
+    const filename = path.basename(sourceFile);
+    
+    // Determine restore path
+    // Try to extract date from filename or use current date
+    // Filename format: rollout-YYYY-MM-DDTHH-MM-SS-UUID.jsonl
+    let targetDir = this.paths.sessionsDir;
+    
+    const match = filename.match(/rollout-(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const [_, year, month, day] = match;
+      targetDir = path.join(this.paths.sessionsDir, year, month, day);
+    }
+    
+    const targetFile = path.join(targetDir, filename);
+    
+    await fs.ensureDir(targetDir);
+    await fs.move(sourceFile, targetFile, { overwrite: false });
+    
+    // Add to index
+    const sessionData = await this.parseSessionFile(targetFile);
+    if (sessionData) {
+      const historyFile = this.paths.historyFile;
+      await fs.appendFile(historyFile, JSON.stringify(sessionData) + '\n');
+    }
   }
 
   private async readHistoryLines(hideAgents: boolean): Promise<HistoryLine[]> {

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { HistoryManager, SessionSummary, SessionMessage } from './core/historyManager';
 import { StateStore } from './core/state';
 import { buildPaths, ensureManagerDirs } from './core/paths';
+import fs from 'fs-extra';
 
 import { SidebarProvider } from './sidebarProvider';
 
@@ -9,7 +10,11 @@ export async function activate(context: vscode.ExtensionContext) {
   const manager = await createHistoryManager();
   
   const sidebarProvider = new SidebarProvider(manager);
-  const treeView = vscode.window.createTreeView('codexHistory.sidebar', { treeDataProvider: sidebarProvider });
+  const treeView = vscode.window.createTreeView('codexHistory.sidebar', { 
+    treeDataProvider: sidebarProvider,
+    manageCheckboxStateManually: true,
+    canSelectMany: false
+  });
   
   context.subscriptions.push(
     vscode.commands.registerCommand('codexHistory.refreshSidebar', async () => {
@@ -121,6 +126,9 @@ type PanelMessage =
   | { type: 'deleteSession'; payload: { sessionId: string } }
   | { type: 'saveRemark'; payload: { sessionId: string; remark: string } }
   | { type: 'resumeInTerminal'; payload: { sessionId: string } }
+  | { type: 'fetchRecycleBin' }
+  | { type: 'fetchRecycleBinSession'; payload: { sessionId: string } }
+  | { type: 'restoreSession'; payload: { sessionId: string } }
   | { type: 'batchDeleteEmpty' }
   | { type: 'archiveToggle'; payload: { sessionId: string } };
 
@@ -199,15 +207,15 @@ class HistoryWebviewPanel {
         break;
       case 'selectSession':
         await this.sendPreview(message.payload.sessionId, message.payload.hideAgents);
-        // Sync to sidebar
-        const item = this.sidebarProvider.getItem(message.payload.sessionId);
-        if (item) {
-            try {
-                this.treeView.reveal(item, { select: true, focus: false, expand: false });
-            } catch (e) {
-                console.error('[Extension] Failed to reveal in sidebar:', e);
-            }
-        }
+        // Sync to sidebar - DISABLED to prevent scroll issues
+        // const item = this.sidebarProvider.getItem(message.payload.sessionId);
+        // if (item) {
+        //     try {
+        //         this.treeView.reveal(item, { select: true, focus: false, expand: false });
+        //     } catch (e) {
+        //         console.error('[Extension] Failed to reveal in sidebar:', e);
+        //     }
+        // }
         break;
       case 'copyResume':
         // Check if session is archived
@@ -241,8 +249,69 @@ class HistoryWebviewPanel {
       case 'archiveToggle':
         await this.handleArchive(message.payload.sessionId);
         break;
+      case 'fetchRecycleBin':
+        await this.sendRecycleBin();
+        break;
+      case 'fetchRecycleBinSession':
+        await this.sendRecycleBinSession(message.payload.sessionId);
+        break;
+      case 'restoreSession':
+        await this.handleRestore(message.payload.sessionId);
+        break;
       default:
         break;
+    }
+  }
+
+  private async sendRecycleBin() {
+    try {
+      const sessions = await this.manager.listRecycleBin();
+      this.panel.webview.postMessage({ type: 'recycleBin', payload: sessions });
+    } catch (error: any) {
+      this.handleError(error);
+    }
+  }
+
+  private async sendRecycleBinSession(sessionId: string) {
+    try {
+      const lines = await this.manager.getRecycleBinSessionContent(sessionId);
+      const content = lines.map(line => {
+        // Simple markdown to HTML conversion for preview
+        let html = line
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br>");
+        
+        // Highlight headers
+        if (html.includes('**User**')) {
+          return `<div class="msg-user">${html.replace('**User**', 'User')}</div>`;
+        } else if (html.includes('**Model**')) {
+          return `<div class="msg-model">${html.replace('**Model**', 'Model')}</div>`;
+        }
+        return `<div>${html}</div>`;
+      }).join('');
+      
+      this.panel.webview.postMessage({ type: 'recycleBinPreview', payload: content });
+    } catch (error: any) {
+      this.panel.webview.postMessage({ type: 'error', payload: error.message });
+    }
+  }
+
+  private async handleRestore(sessionId: string) {
+    try {
+      await this.manager.restoreFromRecycleBin(sessionId);
+      vscode.window.showInformationMessage(`会话 ${sessionId} 已还原`);
+      
+      // Refresh recycle bin
+      await this.sendRecycleBin();
+      
+      // Refresh main list
+      await this.sendSessions(this.currentFilter);
+      this.sidebarProvider.refresh();
+      
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`还原失败: ${error.message}`);
     }
   }
 
@@ -391,10 +460,50 @@ class HistoryWebviewPanel {
     );
     
     if (confirm === '删除') {
-      const sessionIds = emptySessions.map(s => s.sessionId);
-      await this.manager.deleteSessions(sessionIds, { backupHistory: true });
+      // Safety check: verify file sizes before deleting
+      // If a file is > 200 bytes, it's likely not empty and was mislabeled
+      const safeSessionIds: string[] = [];
+      let skippedCount = 0;
+
+      for (const session of emptySessions) {
+        const file = await this.manager.findSessionFile(session.sessionId);
+        if (file) {
+          try {
+            const stats = await fs.stat(file);
+            
+            // Trust turn_count=0 as empty (ignore file size, as it may contain system prompt/AGENTS.md)
+            if ((session.count || 0) === 0) {
+               safeSessionIds.push(session.sessionId);
+               continue;
+            }
+            
+            // For sessions with turns > 0, use a larger threshold (2KB) as a safety guard
+            // This prevents deleting sessions that might have valid content but were parsed incorrectly
+            if (stats.size > 2048) {
+              console.warn(`[BatchDelete] Skipping session ${session.sessionId} because turn_count=${session.count} and file size is ${stats.size} bytes`);
+              skippedCount++;
+              continue;
+            }
+            safeSessionIds.push(session.sessionId);
+          } catch (e) {
+            // If we can't stat the file, skip it to be safe
+            skippedCount++;
+          }
+        }
+      }
+
+      if (safeSessionIds.length === 0) {
+        vscode.window.showWarningMessage(`操作已取消：所有选中的会话文件大小都超过阈值，可能包含有效数据。请尝试重建索引。`);
+        return;
+      }
+
+      await this.manager.deleteSessions(safeSessionIds, { backupHistory: true });
       
-      vscode.window.showInformationMessage(`已删除 ${emptySessions.length} 个空会话`);
+      if (skippedCount > 0) {
+        vscode.window.showInformationMessage(`已删除 ${safeSessionIds.length} 个空会话，跳过 ${skippedCount} 个疑似非空会话`);
+      } else {
+        vscode.window.showInformationMessage(`已删除 ${safeSessionIds.length} 个空会话`);
+      }
       
       // Refresh sidebar
       this.sidebarProvider.refresh();
@@ -475,7 +584,9 @@ class HistoryWebviewPanel {
       display: flex;
       flex-direction: column;
       height: 100vh;
+      width: 100%;
       overflow: hidden;
+      position: relative; /* Ensure children respect boundaries */
     }
 
     .controls {
@@ -533,9 +644,71 @@ class HistoryWebviewPanel {
 
     .content {
       flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0; /* Critical: allow flex item to shrink below content size */
+    }
+
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      background-color: var(--vscode-sideBar-background);
+    }
+
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+
+    .tab:hover {
+      opacity: 1;
+      background-color: var(--vscode-list-hoverBackground);
+    }
+
+    .tab.active {
+      border-bottom-color: var(--vscode-activityBar-foreground);
+      font-weight: bold;
+      opacity: 1;
+    }
+
+    .view-container {
+      flex: 1;
+      display: none;
+      overflow: hidden;
+      min-height: 0; /* Critical: allow flex item to shrink */
+    }
+
+    .view-container.active {
       display: grid;
       grid-template-columns: 300px 1fr;
-      overflow: hidden;
+      height: 100%;
+      min-height: 0; /* Allow grid to shrink */
+    }
+
+    /* Recycle bin view is single column */
+    #recycle-bin-view.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .recycle-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      cursor: pointer;
+    }
+    .recycle-item:hover {
+      background-color: var(--vscode-list-hoverBackground);
+    }
+    .recycle-item.selected {
+      background-color: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
     }
 
     .panel {
@@ -543,12 +716,17 @@ class HistoryWebviewPanel {
       flex-direction: column;
       overflow: hidden;
       border-right: 1px solid var(--vscode-panel-border);
+      min-height: 0; /* Critical: allow panel to shrink */
+      height: 100%; /* Ensure panel fills grid cell */
     }
 
     .panel:last-child {
       border-right: none;
       padding: 10px;
       background-color: var(--vscode-editor-background);
+      overflow: hidden; /* Critical: prevent panel from expanding beyond grid */
+      display: flex; /* Make it a flex container */
+      flex-direction: column; /* Stack children vertically */
     }
 
     .session-meta {
@@ -640,9 +818,11 @@ class HistoryWebviewPanel {
     }
 
     .preview-container {
+      flex: 1; /* Take remaining space in the flex container */
       display: flex;
       flex-direction: column;
-      height: 100%;
+      min-height: 0; /* Critical: allow container to shrink */
+      overflow: hidden; /* Prevent overflow */
       gap: 10px;
     }
 
@@ -767,35 +947,70 @@ class HistoryWebviewPanel {
 </head>
 <body>
   <div class="layout">
-    <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-overlay" id="loading-overlay">
       <div class="spinner"></div>
     </div>
-    <div class="controls">
-      <input id="searchInput" type="text" placeholder="搜索会话..." />
-      <label><input id="pinnedOnly" type="checkbox" /> 仅置顶</label>
-      <label><input id="hideAgents" type="checkbox" checked /> 屏蔽 AGENTS.md</label>
-      <button id="refreshBtn">刷新</button>
-      <button id="batchDeleteEmptyBtn" style="background-color: var(--vscode-editorWarning-foreground); color: var(--vscode-editor-background);">批量删除空会话</button>
+
+    <div class="tabs">
+      <div class="tab active" id="tab-sessions" onclick="switchTab('sessions')">会话列表</div>
+      <div class="tab" id="tab-recycle" onclick="switchTab('recycleBin')">回收站</div>
     </div>
+
     <div class="content">
-      <div class="panel">
-        <div class="list" id="sessionList"></div>
-      </div>
-      <div class="panel">
+      <!-- Sessions View -->
+      <div id="sessions-view" class="view-container active">
+        <div class="panel">
+          <div class="search-box">
+            <input type="text" id="search-input" placeholder="搜索会话..." />
+          </div>
+          <div class="filter-bar">
+             <button id="refresh-btn" title="刷新列表">🔄</button>
+             <label><input type="checkbox" id="pinned-only" /> 仅看置顶</label>
+             <label><input type="checkbox" id="hide-agents" checked /> 屏蔽 AGENTS.md</label>
+             <button onclick="batchDeleteEmpty()" style="margin-left:auto;padding:2px 6px;font-size:0.9em" title="批量删除空会话">🗑️ 清理空会话</button>
+          </div>
+          <div class="list" id="session-list"></div>
+          <!-- Batch delete button moved to filter-bar -->
+        </div>
         <div class="preview-container">
           <div class="buttons">
-            <button onclick="copyResumeCommand()">复制 Resume 命令</button>
-            <button onclick="resumeInTerminal()">在终端恢复 ▶️</button>
-            <button id="pinBtn" disabled>📌 置顶</button>
-            <button id="archiveBtn" disabled>📦 归档</button>
-            <button onclick="deleteSession()" style="background-color: var(--vscode-errorForeground); color: var(--vscode-editor-background);">删除会话</button>
+             <button id="pin-btn" disabled onclick="togglePin()">📌 置顶</button>
+             <button id="archive-btn" disabled onclick="toggleArchive()">📦 归档</button>
+             <button id="copy-resume-btn" disabled onclick="copyResumeCommand()">📋 复制 Resume 命令</button>
+             <button id="resume-terminal-btn" disabled onclick="resumeInTerminal()">🚀 在终端 Resume</button>
+             <button id="delete-btn" disabled onclick="deleteSession()" style="color:var(--vscode-errorForeground);">🗑️ 删除</button>
           </div>
           <div class="remark-group">
-            <input id="remarkInput" type="text" placeholder="添加备注..." disabled />
-            <button id="saveRemarkBtn" disabled>保存</button>
+             <input type="text" id="remark-input" placeholder="添加备注..." disabled />
+             <button id="save-remark-btn" disabled onclick="saveRemark()">保存备注</button>
           </div>
           <div class="preview" id="preview">
-            <div style="padding: 20px; text-align: center; opacity: 0.6;">请选择左侧会话查看详情</div>
+            <div style="display:flex;justify-content:center;align-items:center;height:100%;color:var(--vscode-descriptionForeground);">
+              请选择左侧会话查看详情
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recycle Bin View -->
+      <div id="recycle-bin-view" class="view-container">
+        <div class="recycle-layout" style="display:flex;height:100%">
+          <div class="recycle-sidebar" style="width:300px;display:flex;flex-direction:column;border-right:1px solid var(--vscode-panel-border)">
+            <div class="toolbar" style="padding: 10px; border-bottom: 1px solid var(--vscode-panel-border); display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+              <span style="font-weight:bold">已删除会话</span>
+              <div style="display: flex; gap: 4px;">
+                <button id="restore-btn" disabled onclick="restoreSelectedSession()">♫️ 还原</button>
+                <button onclick="refreshRecycleBin()">🔄 刷新</button>
+              </div>
+            </div>
+            <div class="list" id="recycle-bin-list" style="flex: 1; overflow-y: auto;"></div>
+          </div>
+          <div class="recycle-preview" style="flex:1;display:flex;flex-direction:column;height:100%">
+             <div id="recycle-preview-content" class="preview" style="flex:1;overflow-y:auto;padding:20px;">
+               <div style="display:flex;justify-content:center;align-items:center;height:100%;color:var(--vscode-descriptionForeground);">
+                 请选择左侧已删除会话查看详情
+               </div>
+             </div>
           </div>
         </div>
       </div>
@@ -804,20 +1019,21 @@ class HistoryWebviewPanel {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const state = { sessions: [], selectedId: null, hideAgents: true };
-    const sessionList = document.getElementById('sessionList');
+    const sessionList = document.getElementById('session-list');
     const previewEl = document.getElementById('preview');
-    const searchInput = document.getElementById('searchInput');
-    const pinnedOnly = document.getElementById('pinnedOnly');
-    const hideAgents = document.getElementById('hideAgents');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const batchDeleteEmptyBtn = document.getElementById('batchDeleteEmptyBtn');
-    const pinBtn = document.getElementById('pinBtn');
-    const archiveBtn = document.getElementById('archiveBtn');
-    // const pinBtn = document = document.getElementById('pinBtn');   // Removed
-    // const deleteBtn = document.getElementById('deleteBtn'); // Removed
-    const remarkInput = document.getElementById('remarkInput');
-    const saveRemarkBtn = document.getElementById('saveRemarkBtn');
-    const loadingOverlay = document.getElementById('loadingOverlay');
+    const searchInput = document.getElementById('search-input');
+    const pinnedOnly = document.getElementById('pinned-only');
+    const hideAgents = document.getElementById('hide-agents');
+    const refreshBtn = document.getElementById('refresh-btn');
+    // const batchDeleteEmptyBtn = document.getElementById('batchDeleteEmptyBtn'); // Removed in new layout
+    const pinBtn = document.getElementById('pin-btn');
+    const archiveBtn = document.getElementById('archive-btn');
+    const copyResumeBtn = document.getElementById('copy-resume-btn');
+    const resumeTerminalBtn = document.getElementById('resume-terminal-btn');
+    const deleteBtn = document.getElementById('delete-btn');
+    const remarkInput = document.getElementById('remark-input');
+    const saveRemarkBtn = document.getElementById('save-remark-btn');
+    const loadingOverlay = document.getElementById('loading-overlay');
 
     function setLoading(isLoading) {
       if (isLoading) loadingOverlay.classList.add('visible');
@@ -827,9 +1043,10 @@ class HistoryWebviewPanel {
     vscode.postMessage({ type: 'ready' });
 
     refreshBtn.addEventListener('click', () => { setLoading(true); fetchSessions(); });
-    batchDeleteEmptyBtn.addEventListener('click', () => {
+    function batchDeleteEmpty() {
       vscode.postMessage({ type: 'batchDeleteEmpty' });
-    });
+    }
+    
     searchInput.addEventListener('input', () => setTimeout(() => { setLoading(true); fetchSessions(); }, 500));
     pinnedOnly.addEventListener('change', () => { setLoading(true); fetchSessions(); });
     hideAgents.addEventListener('change', () => { 
@@ -864,32 +1081,31 @@ class HistoryWebviewPanel {
       }
     }
 
-    pinBtn.addEventListener('click', () => {
+    function togglePin() {
       if (state.selectedId) {
         setLoading(true);
         vscode.postMessage({ type: 'pinToggle', payload: { sessionId: state.selectedId } });
       }
-    });
+    }
     
-    archiveBtn.addEventListener('click', () => {
+    function toggleArchive() {
       if (state.selectedId) {
         setLoading(true);
         vscode.postMessage({ type: 'archiveToggle', payload: { sessionId: state.selectedId } });
       }
-    });
-    saveRemarkBtn.addEventListener('click', () => {
+    }
+
+    function saveRemark() {
       if (!state.selectedId) return;
       setLoading(true);
       vscode.postMessage({ type: 'saveRemark', payload: { sessionId: state.selectedId, remark: remarkInput.value || '' } });
-    });
+    }
 
     // Add keyboard shortcut for remark input (Enter or Ctrl+Enter)
     remarkInput.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && e.ctrlKey) || e.key === 'Enter') {
         e.preventDefault();
-        if (!state.selectedId) return;
-        setLoading(true);
-        vscode.postMessage({ type: 'saveRemark', payload: { sessionId: state.selectedId, remark: remarkInput.value || '' } });
+        saveRemark();
       }
     });
 
@@ -903,6 +1119,11 @@ class HistoryWebviewPanel {
         renderSessions();
       } else if (message.type === 'preview') {
         renderPreview(message.payload);
+      } else if (message.type === 'recycleBinPreview') {
+        const previewContent = document.getElementById('recycle-preview-content');
+        if (previewContent) {
+           previewContent.innerHTML = message.payload;
+        }
       } else if (message.type === 'error') {
         sessionList.innerHTML = '<div style="padding:10px;color:var(--vscode-errorForeground)">加载失败: ' + message.payload + '</div>';
       } else if (message.type === 'autoSelectSession') {
@@ -914,13 +1135,7 @@ class HistoryWebviewPanel {
         // Handle selection from sidebar
         state.selectedId = message.payload.sessionId;
         renderSessions();
-        // Scroll to selected item
-        setTimeout(() => {
-          const selectedEl = document.querySelector('.session.selected');
-          if (selectedEl) {
-            selectedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 100);
+        // Note: scrollIntoView removed to prevent scroll container issues
       } else if (message.type === 'refresh') {
         fetchSessions();
       }
@@ -968,8 +1183,15 @@ class HistoryWebviewPanel {
 
     function selectSession(id) {
       state.selectedId = id;
-      pinBtn.disabled = archiveBtn.disabled = saveRemarkBtn.disabled = remarkInput.disabled = !id;
-      saveRemarkBtn.disabled = remarkInput.disabled = !id;
+      const disabled = !id;
+      pinBtn.disabled = disabled;
+      archiveBtn.disabled = disabled;
+      copyResumeBtn.disabled = disabled;
+      resumeTerminalBtn.disabled = disabled;
+      deleteBtn.disabled = disabled;
+      saveRemarkBtn.disabled = disabled;
+      remarkInput.disabled = disabled;
+      
       renderSessions();
       setLoading(true);
       vscode.postMessage({ type: 'selectSession', payload: { sessionId: id, hideAgents: state.hideAgents } });
@@ -1068,24 +1290,132 @@ class HistoryWebviewPanel {
     
     function toggleAllFolded() {
         const foldedContents = document.querySelectorAll('.folded-content');
-        const expandBtns = document.querySelectorAll('.expand-btn:not(.preview-header-controls button)');
+        let anyHidden = false;
+        foldedContents.forEach(el => {
+            if (el.style.display === 'none' || el.style.display === '') {
+                anyHidden = true;
+            }
+        });
         
-        // Check state of first item to decide whether to expand or collapse all
-        if (foldedContents.length === 0) return;
+        foldedContents.forEach(el => {
+            el.style.display = anyHidden ? 'block' : 'none';
+        });
         
-        const firstHidden = foldedContents[0].style.display === 'none' || foldedContents[0].style.display === '';
-        const newState = firstHidden ? 'block' : 'none';
-        
-        foldedContents.forEach(el => el.style.display = newState);
-        expandBtns.forEach(btn => {
-            // Extract count from text
-            const match = btn.textContent.match(/Show (\d+) hidden lines/);
-            const count = match ? match[1] : (btn.getAttribute('data-count') || '...');
-            if (match) btn.setAttribute('data-count', count);
-            
-            btn.textContent = newState === 'block' ? 'Collapse' : 'Show ' + (btn.getAttribute('data-count') || '...') + ' hidden lines';
+        // Update buttons
+        document.querySelectorAll('.expand-btn').forEach(btn => {
+             const count = btn.textContent.match(/\d+/);
+             const num = count ? count[0] : '';
+             btn.textContent = anyHidden ? 'Collapse' : 'Show ' + num + ' hidden lines';
         });
     }
+
+    // --- Recycle Bin Logic ---
+    let currentTab = 'sessions';
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.view-container').forEach(el => el.classList.remove('active'));
+      
+      document.getElementById('tab-' + (tab === 'sessions' ? 'sessions' : 'recycle')).classList.add('active');
+      document.getElementById(tab === 'sessions' ? 'sessions-view' : 'recycle-bin-view').classList.add('active');
+      
+      if (tab === 'recycleBin') {
+        refreshRecycleBin();
+      }
+    }
+
+    function refreshRecycleBin() {
+      setLoading(true);
+      vscode.postMessage({ type: 'fetchRecycleBin' });
+    }
+
+    function restoreSession(id) {
+      setLoading(true);
+      vscode.postMessage({ type: 'restoreSession', payload: { sessionId: id } });
+    }
+    
+    function restoreSelectedSession() {
+      if (state.selectedRecycleId) {
+        restoreSession(state.selectedRecycleId);
+      }
+    }
+
+    function selectRecycleSession(id) {
+      state.selectedRecycleId = id;
+      // Highlight selected
+      document.querySelectorAll('.recycle-item').forEach(el => el.classList.remove('selected'));
+      const selectedEl = document.getElementById('recycle-item-' + id);
+      if (selectedEl) selectedEl.classList.add('selected');
+      
+      // Enable restore button
+      document.getElementById('restore-btn').disabled = false;
+      
+      // Fetch preview
+      document.getElementById('recycle-preview-content').innerHTML = '<div class="spinner"></div>';
+      vscode.postMessage({ type: 'fetchRecycleBinSession', payload: { sessionId: id } });
+    }
+
+    function renderRecycleBin(sessions) {
+      const list = document.getElementById('recycle-bin-list');
+      if (!sessions || sessions.length === 0) {
+        list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.6">回收站为空</div>';
+        return;
+      }
+      
+      list.innerHTML = sessions.map(s => {
+        const dateStr = new Date(s.lastTs).toLocaleString();
+        // Escape single quotes in sessionId for onclick
+        const safeId = s.sessionId.replace(/'/g, "\\'");
+        const title = s.firstText ? (s.firstText.length > 50 ? s.firstText.substring(0, 50) + '...' : s.firstText) : s.sessionId;
+        
+        const remarkHtml = s.remark ? '<br><span class="remark-badge">' + s.remark + '</span>' : '';
+        const archiveBadge = s.isArchived ? '<span class="archive-badge">📦 已归档</span>' : '';
+        const pinIcon = s.pinned ? '<span style="color: var(--vscode-charts-yellow);">⭐ </span>' : '';
+        const isSelected = state.selectedRecycleId === s.sessionId ? ' selected' : '';
+        
+        return '<div class="recycle-item' + isSelected + '" id="recycle-item-' + s.sessionId + '" onclick="selectRecycleSession(\\'' + safeId + '\\')">' +
+          '<div class="recycle-info">' +
+            '<div style="font-weight:bold" title="' + (s.firstText || s.sessionId) + '">' + pinIcon + title + archiveBadge + '</div>' +
+            '<div style="font-size:0.85em;opacity:0.7">' +
+              'ID: ' + s.sessionId + '<br>' +
+              '删除时间: ' + dateStr +
+              remarkHtml +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    window.addEventListener('message', event => {
+      const message = event.data;
+      switch (message.type) {
+        case 'update':
+          state.sessions = message.payload;
+          renderSessions();
+          setLoading(false);
+          break;
+        case 'recycleBin':
+          renderRecycleBin(message.payload);
+          setLoading(false);
+          break;
+        case 'selectSession':
+          state.selectedId = message.payload.sessionId;
+          state.hideAgents = message.payload.hideAgents;
+          renderSessions();
+          // Find session data
+          const session = state.sessions.find(s => s.sessionId === state.selectedId);
+          if (session) {
+             // Request full details
+             vscode.postMessage({ type: 'selectSession', payload: { sessionId: state.selectedId, hideAgents: state.hideAgents } });
+          }
+          break;
+        case 'sessionDetails':
+          renderPreview(message.payload);
+          setLoading(false);
+          break;
+      }
+    });
   </script>
 </body>
 </html>`;
