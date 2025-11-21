@@ -98,14 +98,33 @@ codex-history web --codex-home /custom/.codex --manager-home /tmp/codex-history 
 - 这些可执行文件已经包含 `dist/` JS 与 `public/` 静态资源，无需 Node/TS 编译环境。
 
 ## VS Code 插件
-- 目录：`vscode-extension`
-- 功能：在 VS Code 内通过 Webview 管理 Codex 历史（会话列表、搜索、置顶、备注、复制 resume、删除、屏蔽 AGENTS 文本）。
-- 开发/调试：
-  1. `cd vscode-extension`
-  2. `npm install`
-  3. `npm run compile`
-  4. 在 VS Code 中使用 “运行与调试” -> “扩展” 启动，即可在新窗口中通过命令面板执行 “Codex History: 打开 Codex 历史管理”。
-- 插件依赖与历史数据使用规则与 CLI 相同：默认读取当前系统用户目录下的 `~/.codex`，如需跨环境，可通过设置 `--codex-home`（后续可扩展配置项）。
+
+- **目录：** `vscode-extension`
+- **版本：** 0.0.12
+- **插件商店：** [Codex History Manager](https://marketplace.visualstudio.com/items?itemName=llsenyue.codex-history-vscode)
+
+### 核心功能
+- 📚 **会话管理**：浏览器内查看所有 Codex 对话历史（支持侧边栏和 Webview）
+- 🔍 **搜索与筛选**：关键字搜索、仅看置顶、屏蔽 AGENTS.md
+- 📌 **置顶功能**：标记重要会话，置顶会话优先显示
+- 📦 **归档管理**：归档/取消归档会话，归档会话自动移至专用目录
+- 📝 **备注管理**：为会话添加自定义备注
+- 🗑️ **删除与回收站**：删除会话移至回收站，支持还原，保留元数据（备注、置顶、归档状态）
+- ⌨️ **快捷键支持**：Delete 键快速删除，Enter 键保存备注
+- ▶️ **终端恢复**：一键在 VS Code 终端中恢复会话
+
+### 开发/调试
+1. `cd vscode-extension`
+2. `npm install`
+3. `npm run compile`
+4. 在 VS Code 中使用 "运行与调试" -> "扩展" 启动
+5. 在新窗口中通过命令面板执行 "Codex History: 打开管理器"
+
+### 安装使用
+- **从插件商店安装**：在 VS Code 中搜索 "Codex History Manager"
+- **手动安装**：`code --install-extension codex-history-vscode-0.0.12.vsix`
+- **配置路径**：可在设置中配置 `codexHistory.codexHome`（默认 `~/.codex`）
+
 
 ## 已知不足与后续增强想法
 - 尚未提供批量导出/归档能力，可后续添加 JSON/CSV 导出。
