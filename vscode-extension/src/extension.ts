@@ -12,7 +12,11 @@ export async function activate(context: vscode.ExtensionContext) {
   const treeView = vscode.window.createTreeView('codexHistory.sidebar', { treeDataProvider: sidebarProvider });
   
   context.subscriptions.push(
-    vscode.commands.registerCommand('codexHistory.refreshSidebar', () => {
+    vscode.commands.registerCommand('codexHistory.refreshSidebar', async () => {
+      // Check for new session files and add them to index
+      await manager.checkForNewSessions();
+      
+      // Refresh UI
       sidebarProvider.refresh();
       if (HistoryWebviewPanel.currentPanel) {
         HistoryWebviewPanel.currentPanel.refresh();
@@ -82,8 +86,8 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  const command = vscode.commands.registerCommand('codexHistory.openManager', (sessionId?: string) => {
-    HistoryWebviewPanel.createOrShow(context, manager, sidebarProvider, treeView, sessionId);
+  const command = vscode.commands.registerCommand('codexHistory.openManager', async (sessionId?: string) => {
+    await HistoryWebviewPanel.createOrShow(context, manager, sidebarProvider, treeView, sessionId);
   });
 
   context.subscriptions.push(command);
@@ -100,7 +104,12 @@ async function createHistoryManager(): Promise<HistoryManager> {
   await ensureManagerDirs(paths);
   const state = new StateStore(paths);
   await state.load();
-  return new HistoryManager(paths, state);
+  const manager = new HistoryManager(paths, state);
+  
+  // Auto-index on first launch if history.jsonl doesn't exist or is empty
+  await manager.autoIndexIfNeeded();
+  
+  return manager;
 }
 
 type PanelMessage =
@@ -134,9 +143,16 @@ class HistoryWebviewPanel {
     });
   }
 
-  static createOrShow(context: vscode.ExtensionContext, manager: HistoryManager, sidebarProvider: SidebarProvider, treeView: vscode.TreeView<any>, initialSessionId?: string) {
+  static async createOrShow(context: vscode.ExtensionContext, manager: HistoryManager, sidebarProvider: SidebarProvider, treeView: vscode.TreeView<any>, initialSessionId?: string) {
+    // Check for new sessions whenever Webview is opened
+    await manager.checkForNewSessions();
+    
     if (HistoryWebviewPanel.currentPanel) {
       HistoryWebviewPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
+      
+      // Refresh to show any new sessions
+      HistoryWebviewPanel.currentPanel.refresh();
+      
       if (initialSessionId) {
         HistoryWebviewPanel.currentPanel.sendPreview(initialSessionId, true);
         // Sync selection in list

@@ -436,6 +436,194 @@ export class HistoryManager {
     console.log(`[Manager] Rebuilt index with ${newHistoryLines.length} sessions`);
   }
 
+  /**
+   * Auto-index if history.jsonl doesn't exist or is empty
+   * This is called on extension activation to ensure first-time users see their sessions
+   */
+  async autoIndexIfNeeded(): Promise<boolean> {
+    const historyFile = this.paths.historyFile;
+    const exists = await fs.pathExists(historyFile);
+    
+    if (!exists) {
+      console.log('[Manager] history.jsonl does not exist, performing auto-index');
+      await this.rebuildIndex();
+      return true;
+    }
+    
+    // Check if file is empty
+    const content = await fs.readFile(historyFile, 'utf-8');
+    const lines = content.split(/\r?\n/).filter(Boolean);
+    
+    if (lines.length === 0) {
+      console.log('[Manager] history.jsonl is empty, performing auto-index');
+      await this.rebuildIndex();
+      return true;
+    }
+    
+    console.log('[Manager] history.jsonl exists with data, skipping auto-index');
+    return false;
+  }
+
+  /**
+   * Check for new session files not in the current index and add them incrementally
+   * Returns the number of new sessions added
+   */
+  async checkForNewSessions(): Promise<number> {
+    console.log('[Manager] Checking for new session files...');
+    
+    // Get all session IDs currently in the index
+    const indexedSessions = new Set<string>();
+    const historyFile = this.paths.historyFile;
+    
+    if (await fs.pathExists(historyFile)) {
+      const lines = await this.readHistoryLines(false); // Don't filter by agents for this check
+      lines.forEach(line => indexedSessions.add(line.session_id));
+    }
+    
+    // Scan for all session files
+    const dirsToScan = [this.paths.sessionsDir];
+    const archivedDir = path.join(this.paths.codexHome, 'archived_sessions');
+    if (await fs.pathExists(archivedDir)) {
+      dirsToScan.push(archivedDir);
+    }
+    
+    const allSessionFiles: string[] = [];
+    for (const dir of dirsToScan) {
+      const files = await fg('**/*.jsonl', {
+        cwd: dir,
+        absolute: true,
+        ignore: ['**/trash/**'],
+      });
+      allSessionFiles.push(...files);
+    }
+    
+    // Find new session files
+    const newSessions: Array<{ file: string; isArchived: boolean }> = [];
+    for (const file of allSessionFiles) {
+      const filename = path.basename(file);
+      const match = filename.match(/rollout-([\d-T]+)-([a-f0-9-]+)\.jsonl/i);
+      if (match) {
+        const sessionId = match[2];
+        if (!indexedSessions.has(sessionId)) {
+          const isArchived = file.includes('archived_sessions');
+          newSessions.push({ file, isArchived });
+        }
+      }
+    }
+    
+    if (newSessions.length === 0) {
+      console.log('[Manager] No new session files found');
+      return 0;
+    }
+    
+    console.log(`[Manager] Found ${newSessions.length} new session files, adding to index...`);
+    
+    // Process new sessions and append to history.jsonl
+    const newHistoryLines: any[] = [];
+    
+    for (const { file, isArchived } of newSessions) {
+      try {
+        const content = await fs.readFile(file, 'utf-8');
+        const lines = content.split(/\r?\n/).filter(Boolean);
+        
+        if (lines.length === 0) continue;
+        
+        let firstLine: any = null;
+        let lastLine: any = null;
+        
+        // Parse first and last valid lines
+        for (const lineStr of lines) {
+          try {
+            firstLine = JSON.parse(lineStr);
+            break;
+          } catch (e) {}
+        }
+        
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            lastLine = JSON.parse(lines[i]);
+            break;
+          } catch (e) {}
+        }
+        
+        if (!firstLine || !lastLine) continue;
+        
+        // Extract session info  (similar logic to rebuildIndex)
+        let timestamp: number | string | undefined = firstLine.timestamp || firstLine.id;
+        if (typeof timestamp === 'string') {
+          timestamp = new Date(timestamp).getTime();
+        }
+        if (!timestamp || isNaN(timestamp as number)) continue;
+        
+        const sessionId = firstLine.id || path.basename(file).replace(/^rollout-[\d-T]+-/, '').replace(/\.jsonl$/, '');
+        
+        // Count turns and extract text
+        let turnCount = 0;
+        let firstText = '';
+        
+        // Helper to check system prompts
+        const isSystemPromptText = (text: string) => {
+          const lower = text.toLowerCase();
+          return lower.includes('you are in a project') || 
+                 lower.includes('agents.md') || 
+                 lower.includes('system:');
+        };
+        
+        for (const lineStr of lines) {
+          try {
+            const parsed = JSON.parse(lineStr);
+            if (parsed.type === 'tool_use' || parsed.type === 'user_item') {
+              const extractedText = parsed.payload?.content || parsed.payload?.text || '';
+              if (extractedText && !isSystemPromptText(extractedText)) {
+                if (!firstText) firstText = extractedText;
+                turnCount++;
+              }
+            }
+          } catch (e) {}
+        }
+        
+        // Clean and format first text
+        const cleanedFirstText = (() => {
+          if (!firstText) return '(空会话)';
+          const cleaned = firstText.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+          return cleaned.length > 80 ? cleaned.substring(0, 80) + '...' : cleaned;
+        })();
+        
+        newHistoryLines.push({
+          session_id: sessionId,
+          ts: timestamp,
+          first_text: cleanedFirstText,
+          last_text: cleanedFirstText,
+          turn_count: turnCount || 1,
+          is_archived: isArchived
+        });
+        
+      } catch (error) {
+        console.error(`[Manager] Error processing new file ${file}:`, error);
+      }
+    }
+    
+    if (newHistoryLines.length === 0) {
+      return 0;
+    }
+    
+    // Append new lines to history.jsonl
+    const stream = fs.createWriteStream(historyFile, { flags: 'a' }); // append mode
+    for (const line of newHistoryLines) {
+      stream.write(JSON.stringify(line) + '\n');
+    }
+    
+    await new Promise<void>((resolve, reject) => {
+      stream.on('error', reject);
+      stream.on('finish', resolve);
+      stream.end();
+    });
+    
+    console.log(`[Manager] Added ${newHistoryLines.length} new sessions to index`);
+    return newHistoryLines.length;
+  }
+
+
   async readSessionMessages(
     sessionId: string,
     options: { limit?: number; hideAgents?: boolean } = {}
