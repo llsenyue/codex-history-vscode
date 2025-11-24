@@ -1,12 +1,12 @@
 {
   "name": "codex-history-vscode",
   "displayName": "Codex History Manager",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "在 VS Code 内浏览、预览并管理 Codex 历史对话",
   "publisher": "llsenyue",
   "main": "./out/extension.js",
   "engines": {
-    "vscode": "^1.106.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
@@ -99,7 +99,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "@types/vscode": "^1.106.1",
+    "@types/vscode": "^1.85.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

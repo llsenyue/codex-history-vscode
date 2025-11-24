@@ -100,7 +100,7 @@ codex-history web --codex-home /custom/.codex --manager-home /tmp/codex-history 
 ## VS Code 插件
 
 - **目录：** `vscode-extension`
-- **版本：** 0.0.12
+- **版本：** 0.0.13
 - **插件商店：** [Codex History Manager](https://marketplace.visualstudio.com/items?itemName=llsenyue.codex-history-vscode)
 
 ### 核心功能
